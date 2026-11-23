@@ -133,8 +133,13 @@ object DetectionEngine {
             if (!bypassDuplicateCheck) {
                 synchronized(hashLock) {
                     val prevResult = latestResult
+                    val isPrevDefinitelySafe = prevResult != null &&
+                        !prevResult.isExplicit &&
+                        prevResult.predictedCategory != ContentCategory.UNCERTAIN.name &&
+                        prevResult.predictedCategory != ContentCategory.SUGGESTIVE.name
                     if (prevResult != null &&
                         prevResult.successful &&
+                        isPrevDefinitelySafe &&
                         packageName == lastFramePackage &&
                         (nowElapsed - lastFrameElapsedMs) < DUPLICATE_CACHE_TTL_MS &&
                         PerceptualFrameHasher.hammingDistance(frameHash, lastFrameHash) <= DUPLICATE_HASH_MAX_HAMMING_DIST

@@ -26,6 +26,17 @@ data class ResolvedWindowContext(
  */
 object ActiveWindowResolver {
     private val labelCache = ConcurrentHashMap<String, String>()
+    private const val SELF_PACKAGE = "com.paulfruitful.screenguard"
+
+    fun isSelfOverlayEvent(event: AccessibilityEvent?): Boolean {
+        if (event == null) return false
+        val pkg = event.packageName?.toString() ?: return false
+        if (pkg != SELF_PACKAGE) return false
+        val cls = event.className?.toString() ?: ""
+        // Only MainActivity represents the actual Screen Guard React Native application activity;
+        // any FrameLayout/TextView/View event from SELF_PACKAGE is our own protective overlay.
+        return !cls.contains("MainActivity", ignoreCase = true)
+    }
 
     private val IGNORED_TRANSIENT_PACKAGES = setOf(
         "com.android.systemui",
@@ -55,7 +66,9 @@ object ActiveWindowResolver {
         fallbackWindowId: Int
     ): ResolvedWindowContext {
         val eventPkg = event?.packageName?.toString()
-        if (event != null && !eventPkg.isNullOrBlank() && isTransientSystemOverlay(eventPkg)) {
+        if (event != null &&
+            (!eventPkg.isNullOrBlank() && isTransientSystemOverlay(eventPkg) || isSelfOverlayEvent(event))
+        ) {
             return ResolvedWindowContext(
                 packageName = fallbackPackage,
                 appLabel = getAppLabel(service, fallbackPackage),
@@ -152,12 +165,15 @@ object ActiveWindowResolver {
         }
 
         // 2. If primaryWindow.root was temporarily null, query service.rootInActiveWindow
+        // (ignoring SELF_PACKAGE unless MainActivity was explicitly opened)
         if (candidatePackage.isNullOrBlank()) {
             try {
                 val activeRoot = service.rootInActiveWindow
                 if (activeRoot != null) {
                     val rootPkg = activeRoot.packageName?.toString()
-                    if (!isTransientSystemOverlay(rootPkg)) {
+                    if (!isTransientSystemOverlay(rootPkg) &&
+                        (rootPkg != SELF_PACKAGE || eventPkg == SELF_PACKAGE && !isSelfOverlayEvent(event))
+                    ) {
                         candidatePackage = rootPkg
                         if (candidateWindowId < 0 && activeRoot.windowId >= 0) {
                             candidateWindowId = activeRoot.windowId

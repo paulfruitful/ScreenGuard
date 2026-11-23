@@ -134,15 +134,30 @@ object LocalStorage {
             } else {
                 excludedSet.addAll(UserPreferencesData().excludedPackages)
             }
-            UserPreferencesData(
+            val isPreMilestone3 = !obj.has("sensitivityMode")
+            val rawBehavior = obj.optString("interventionBehavior", "PROTECTIVE_OVERLAY")
+            val effectiveBehavior = if (isPreMilestone3 ||
+                rawBehavior == "WARNING_BANNER_FUTURE" ||
+                rawBehavior == "STATUS_NOTIFICATION"
+            ) {
+                "PROTECTIVE_OVERLAY"
+            } else {
+                rawBehavior
+            }
+            val effectiveConfirmFrames = if (isPreMilestone3) {
+                2
+            } else {
+                obj.optInt("confirmationFramesRequired", 2).coerceIn(1, 10)
+            }
+            val loaded = UserPreferencesData(
                 protectionEnabled = obj.optBoolean("protectionEnabled", true),
                 excludedPackages = excludedSet,
                 samplingIntervalMs = obj.optLong("samplingIntervalMs", 2000L).coerceAtLeast(1050L),
                 debounceDelayMs = obj.optLong("debounceDelayMs", 550L).coerceIn(150L, 5000L),
                 preferWindowCapture = obj.optBoolean("preferWindowCapture", true),
                 confidenceThreshold = obj.optDouble("confidenceThreshold", 0.72).toFloat().coerceIn(0.3f, 0.99f),
-                confirmationFramesRequired = obj.optInt("confirmationFramesRequired", 2).coerceIn(1, 10),
-                interventionBehavior = obj.optString("interventionBehavior", "PROTECTIVE_OVERLAY"),
+                confirmationFramesRequired = effectiveConfirmFrames,
+                interventionBehavior = effectiveBehavior,
                 sensitivityMode = obj.optString("sensitivityMode", "BALANCED").uppercase(),
                 interveneOnSuggestiveInStrict = obj.optBoolean("interveneOnSuggestiveInStrict", true),
                 allowManualDismiss = obj.optBoolean("allowManualDismiss", true),
@@ -150,6 +165,10 @@ object LocalStorage {
                 mockClassifierProfile = obj.optString("mockClassifierProfile", "DETERMINISTIC_SAFE"),
                 allowSelfPackageInDiagnostics = obj.optBoolean("allowSelfPackageInDiagnostics", true)
             )
+            if (isPreMilestone3) {
+                savePreferencesInternal(loaded)
+            }
+            loaded
         } catch (_: Exception) {
             UserPreferencesData()
         }

@@ -243,9 +243,8 @@ class ScreenGuardOverlayController(
         }.apply {
             setBackgroundColor(Color.parseColor("#FA0B0F14"))
             isClickable = true
-            isFocusable = true
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
-            contentDescription = "Content hidden for your protection by Screen Guard"
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
             // Consume all stray touches on the backdrop so zero touches leak to the covered app
             setOnTouchListener { _, _ -> true }
         }

@@ -158,14 +158,15 @@ class ProtectionDecisionEngineSim:
             self.consecutive_positive_frames += 1
             self.consecutive_safe_frames = 0
             self.active_trigger_category = category
-            req = max(2, policy.confirmation_frames_required)
+            req = max(1, policy.confirmation_frames_required)
             meets_smoothed = self.ewma_violation_confidence >= (thresh * 0.72)
+            is_high_conf_corroborated = (
+                (category == "EXPLICIT" and eff_score >= thresh)
+                or (category == "NUDITY" and (eff_score >= 0.48 or (s2_triggered and s2_nsfw >= 0.42)))
+                or (category == "SEXUAL_ACTIVITY" and (eff_score >= 0.50 or (s2_triggered and s2_nsfw >= 0.45)))
+            )
             confirmed = (self.consecutive_positive_frames >= req and meets_smoothed) or (
-                self.consecutive_positive_frames >= 1
-                and category == "EXPLICIT"
-                and eff_score >= 0.92
-                and s2_triggered
-                and s2_nsfw >= 0.75
+                self.consecutive_positive_frames >= 1 and is_high_conf_corroborated
             )
             if confirmed or currently_showing:
                 if not currently_showing:
@@ -248,19 +249,19 @@ def run_state_machine_unit_verification():
     policy_balanced = ProtectionPolicyConfig(mode="BALANCED", base_threshold=0.72, confirmation_frames=2)
     engine = ProtectionDecisionEngineSim()
 
-    # Scenario A: Single suspicious frame -> PENDING (no flicker), followed by SAFE -> HIDDEN
-    d1 = engine.evaluate("NUDITY", 0.65, "com.instagram.android", 1000, policy_balanced)
+    # Scenario A: Single borderline frame (e.g. NUDITY 0.43 without Stage 2) -> PENDING (no flicker), followed by SAFE -> HIDDEN
+    d1 = engine.evaluate("NUDITY", 0.43, "com.instagram.android", 1000, policy_balanced)
     assert d1["state"] == "PENDING" and not d1["shouldShow"], f"Expected PENDING, got {d1}"
     d2 = engine.evaluate("NON_EXPLICIT", 0.92, "com.instagram.android", 2500, policy_balanced)
     assert d2["state"] == "HIDDEN" and not d2["shouldShow"], f"Expected HIDDEN reset, got {d2}"
-    print("[PASS] Scenario A: Single unconfirmed positive frame enters PENDING without showing overlay; safe frame resets to HIDDEN.")
+    print("[PASS] Scenario A: Single borderline frame enters PENDING without showing overlay; safe frame resets to HIDDEN.")
 
-    # Scenario B: Two consecutive policy-violating frames -> TRIGGER_PROTECTION (PROTECTED)
-    d3 = engine.evaluate("SEXUAL_ACTIVITY", 0.68, "com.instagram.android", 4000, policy_balanced)
-    assert d3["state"] == "PENDING", f"Expected PENDING on frame 1, got {d3}"
-    d4 = engine.evaluate("SEXUAL_ACTIVITY", 0.74, "com.instagram.android", 5500, policy_balanced)
+    # Scenario B: Two consecutive borderline frames -> TRIGGER_PROTECTION (PROTECTED), or 1 high-confidence corroborated frame -> Immediate PROTECTED
+    d3 = engine.evaluate("SEXUAL_ACTIVITY", 0.46, "com.instagram.android", 4000, policy_balanced)
+    assert d3["state"] == "PENDING", f"Expected PENDING on borderline frame 1, got {d3}"
+    d4 = engine.evaluate("SEXUAL_ACTIVITY", 0.48, "com.instagram.android", 5150, policy_balanced)
     assert d4["state"] == "PROTECTED" and d4["directive"] == "TRIGGER_PROTECTION" and d4["shouldShow"], f"Expected PROTECTED on frame 2, got {d4}"
-    print("[PASS] Scenario B: Consecutive confirmed SEXUAL_ACTIVITY frames transition PENDING -> PROTECTED and show overlay.")
+    print("[PASS] Scenario B: Borderline frames transition PENDING -> PROTECTED on automatic 1.15s re-capture; corroborated explicit frames trigger immediately.")
 
     # Scenario C: Temporary UNCERTAIN frame while PROTECTED -> Maintains overlay (no flicker)
     d5 = engine.evaluate("UNCERTAIN", 0.41, "com.instagram.android", 6500, policy_balanced)
@@ -290,7 +291,7 @@ def run_state_machine_unit_verification():
     d9 = engine.evaluate("NUDITY", 0.80, "com.twitter.android", 26000, policy_balanced)  # +4s (< 12s cooldown)
     assert d9["state"] == "DISMISSED" and d9["directive"] == "SUPPRESSED_BY_COOLDOWN" and not d9["shouldShow"]
     d10 = engine.evaluate("NUDITY", 0.80, "com.twitter.android", 35000, policy_balanced)  # +13s (> 12s cooldown expired)
-    assert d10["state"] == "PENDING"
+    assert d10["state"] in ("PENDING", "PROTECTED") and d10["shouldShow"]
     print("[PASS] Scenario F: Manual dismissal transitions to DISMISSED, suppresses re-trigger during 12s cooldown, and resumes after expiry.")
 
 

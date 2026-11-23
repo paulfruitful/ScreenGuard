@@ -18,6 +18,7 @@ import com.paulfruitful.screenguard.capture.ProcessedScreenshotOutcome
 import com.paulfruitful.screenguard.capture.ScreenshotProcessor
 import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
 import com.paulfruitful.screenguard.classifier.DetectionEngine
+import com.paulfruitful.screenguard.protection.OverlayState
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.LocalStorage
@@ -253,8 +254,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
 
         if (!isSupportedEvent) return
 
-        // Privacy & System Overlay Guard: immediately ignore password events and transient system UI / IME events
+        // Privacy & System Overlay Guard: immediately ignore password events, transient system UI / IME events,
+        // and any events originating from our own protective overlay view
         if (event.isPassword) return
+        if (ActiveWindowResolver.isSelfOverlayEvent(event)) return
         val eventPkg = event.packageName?.toString()
         if (!eventPkg.isNullOrBlank() && ActiveWindowResolver.isTransientSystemOverlay(eventPkg)) return
 
@@ -334,8 +337,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         }
 
         // Do not schedule automatic background screenshots when protection is paused,
+        // when the full-screen protective overlay is already covering the screen,
         // when Screen Guard itself is in the foreground, or when the foreground app is excluded.
         if (!prefs.protectionEnabled) return
+        if (ProtectionCoordinator.isOverlayVisible()) return
         val activePkg = currentForegroundPackage
         if (activePkg.isBlank() || activePkg == "None" || activePkg == SELF_PACKAGE) return
         if (prefs.excludedPackages.contains(activePkg)) return
@@ -510,11 +515,28 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 )
 
                 val prefs = LocalStorage.getPreferences(applicationContext)
-                ProtectionCoordinator.onClassificationResult(
+                val decision = ProtectionCoordinator.onClassificationResult(
                     context = applicationContext,
                     result = classification,
                     appLabel = currentForegroundAppLabel
                 )
+                // If a borderline positive detection entered PENDING confirmation on a static screen,
+                // automatically schedule a follow-up verification capture in 1150ms even if the user stops scrolling.
+                if (decision.targetOverlayState == OverlayState.PENDING &&
+                    prefs.protectionEnabled &&
+                    !ProtectionCoordinator.isOverlayVisible()
+                ) {
+                    eventDebouncer.schedule(
+                        isImmediateAppSwitch = false,
+                        debounceDelayMs = 1150L,
+                        minCooldownMs = 1100L
+                    ) {
+                        executeObservationPipeline(
+                            holdInMemoryPreview = false,
+                            bypassSelfExclusion = false
+                        )
+                    }
+                }
                 if (classification.confirmedIntervention &&
                     prefs.interventionBehavior == "STATUS_NOTIFICATION"
                 ) {

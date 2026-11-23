@@ -197,16 +197,21 @@ class ProtectionDecisionEngine {
             consecutiveSafeFrames = 0
             activeTriggerCategory = result.predictedCategory
 
-            val requiredFrames = policy.confirmationFramesRequired.coerceAtLeast(2)
-            // High-certainty corroborated frame (e.g., > 92% explicit with Stage 2 confirmation) or
-            // N consecutive policy-violating frames with smoothed EWMA above 70% of threshold
+            val requiredFrames = policy.confirmationFramesRequired.coerceAtLeast(1)
             val meetsSmoothedGate = ewmaViolationConfidence >= (catEval.thresholdUsed * 0.72f)
+            val isHighConfidenceCorroborated =
+                result.confirmedIntervention ||
+                    (result.predictedCategory == ContentCategory.EXPLICIT.name &&
+                        catEval.effectiveScore >= catEval.thresholdUsed) ||
+                    (result.predictedCategory == ContentCategory.NUDITY.name &&
+                        (catEval.effectiveScore >= 0.48f ||
+                            (result.stage2Triggered && result.stage2NsfwScore >= 0.42f))) ||
+                    (result.predictedCategory == ContentCategory.SEXUAL_ACTIVITY.name &&
+                        (catEval.effectiveScore >= 0.50f ||
+                            (result.stage2Triggered && result.stage2NsfwScore >= 0.45f)))
+
             val confirmed = (consecutivePositiveFrames >= requiredFrames && meetsSmoothedGate) ||
-                (consecutivePositiveFrames >= 1 &&
-                    result.predictedCategory == ContentCategory.EXPLICIT.name &&
-                    catEval.effectiveScore >= 0.92f &&
-                    result.stage2Triggered &&
-                    result.stage2NsfwScore >= 0.75f)
+                (consecutivePositiveFrames >= 1 && isHighConfidenceCorroborated)
 
             return if (confirmed || isCurrentlyShowingOverlay) {
                 if (!isCurrentlyShowingOverlay) {

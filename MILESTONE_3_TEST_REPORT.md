@@ -64,9 +64,15 @@ Implemented in [ProtectionDecisionEngine.kt](file:///c:/Users/HomePC/ScreenGuard
 
 ---
 
-## 4. Accessibility Service Lifecycle Integration (Section 7)
+## 4. Accessibility Service Lifecycle Integration & Static-Screen Activation Safeguards (Section 7)
 
-Implemented in [ScreenGuardAccessibilityService.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/accessibility/ScreenGuardAccessibilityService.kt) and [ProtectionCoordinator.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/protection/ProtectionCoordinator.kt):
+Implemented in [ScreenGuardAccessibilityService.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/accessibility/ScreenGuardAccessibilityService.kt), [ActiveWindowResolver.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/accessibility/ActiveWindowResolver.kt), [DetectionEngine.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/classifier/DetectionEngine.kt), and [ProtectionCoordinator.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/protection/ProtectionCoordinator.kt):
+- **Preventing Overlay Self-Cancellation Feedback Loops**: The protective overlay root view sets `IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS`, and `ActiveWindowResolver.isSelfOverlayEvent` filters out any window-state events originating from Screen Guard's own overlay views so attaching the shield never triggers a false foreground-app switch to `com.paulfruitful.screenguard`.
+- **Immediate Activation on Corroborated Explicit/Nudity/Sexual-Activity Frames + Automatic Re-Capture for Borderline Static Screens**:
+  - High-confidence or Stage-2-corroborated `EXPLICIT`, `NUDITY`, and `SEXUAL_ACTIVITY` classifications transition directly to `PROTECTED` on Frame 1.
+  - Borderline detections enter `PENDING` and automatically schedule a follow-up verification capture in `1150 ms` even if the user stops scrolling, with `dHash` duplicate skipping bypassed for non-safe frames.
+- **Preventing Self-Capture While Shield Is Active**: While `ProtectionCoordinator.isOverlayVisible()` is `true`, automatic background screenshots are paused so the service does not capture its own opaque shield and misclassify the screen as `SAFE`.
+- **Automatic Legacy Preferences Migration**: Devices upgrading from Milestone 1/2 automatically migrate `interventionBehavior` from `"LOG_ONLY"` / `"STATUS_NOTIFICATION"` to `"PROTECTIVE_OVERLAY"`.
 - **Foreground Application Changes**: When `ActiveWindowResolver` resolves a new foreground package (`isAppChanged`), `ProtectionCoordinator.onForegroundAppChanged(...)` immediately detaches any overlay belonging to the previous application and resets per-app temporal counters.
 - **Screen-Off & Non-Interactive Display Guard**: Registers a `BroadcastReceiver` for `Intent.ACTION_SCREEN_OFF` and checks `PowerManager.isInteractive`. When the device screen turns off, pending debouncer tasks are cancelled, volatile buffers are purged, any visible overlay is immediately removed, and transient protection state is reset.
 - **Orientation & Configuration Changes**: `ScreenGuardAccessibilityService.onConfigurationChanged(newConfig)` forwards configuration changes to `ProtectionCoordinator.onConfigurationChanged(newConfig)` to update `WindowManager.LayoutParams` in place without view recreation.

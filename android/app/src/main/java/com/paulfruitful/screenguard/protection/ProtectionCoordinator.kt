@@ -46,6 +46,8 @@ object ProtectionCoordinator {
     @Volatile
     private var activeConfidence: Float = 0f
 
+    fun isOverlayVisible(): Boolean = overlayController?.isVisible() == true
+
     fun init(context: Context) {
         if (overlayController != null && appContext != null) return
         synchronized(lock) {
