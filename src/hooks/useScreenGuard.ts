@@ -170,6 +170,14 @@ export function useScreenGuard() {
             }));
             refreshAll();
             break;
+
+          case 'PROTECTION_STATE_CHANGED':
+            setStatus(prev => ({
+              ...prev,
+              protectionSummary: event.summary,
+            }));
+            refreshAll();
+            break;
         }
       },
     );
@@ -201,6 +209,72 @@ export function useScreenGuard() {
       );
     }
   }, []);
+
+  const openOverlaySettings = useCallback(async () => {
+    try {
+      await ScreenGuardNative.openOverlaySettings();
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error
+          ? err.message
+          : 'Unable to open Display Over Other Apps Settings',
+      );
+    }
+  }, []);
+
+  const triggerOverlayTest = useCallback(
+    async (category = 'EXPLICIT', delayMs = 0, autoHideDurationMs = 0) => {
+      setLastError(null);
+      try {
+        const summary = await ScreenGuardNative.triggerOverlayTest(
+          category,
+          delayMs,
+          autoHideDurationMs,
+        );
+        if (isMountedRef.current) {
+          setStatus(prev => ({
+            ...prev,
+            protectionSummary: summary,
+          }));
+        }
+        await refreshAll();
+        return summary;
+      } catch (err: unknown) {
+        if (isMountedRef.current) {
+          setLastError(
+            err instanceof Error
+              ? err.message
+              : 'Failed to trigger protective overlay test',
+          );
+        }
+        return null;
+      }
+    },
+    [refreshAll],
+  );
+
+  const dismissActiveOverlay = useCallback(async () => {
+    try {
+      const summary = await ScreenGuardNative.dismissActiveOverlay();
+      if (isMountedRef.current) {
+        setStatus(prev => ({
+          ...prev,
+          protectionSummary: summary,
+        }));
+      }
+      await refreshAll();
+      return summary;
+    } catch (err: unknown) {
+      if (isMountedRef.current) {
+        setLastError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to dismiss protective overlay',
+        );
+      }
+      return null;
+    }
+  }, [refreshAll]);
 
   const toggleProtection = useCallback(
     async (enabled: boolean) => {
@@ -439,6 +513,9 @@ export function useScreenGuard() {
     lastError,
     refreshAll,
     openAccessibilitySettings,
+    openOverlaySettings,
+    triggerOverlayTest,
+    dismissActiveOverlay,
     toggleProtection,
     updatePreferences,
     clearActivityHistory,

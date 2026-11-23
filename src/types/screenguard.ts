@@ -13,9 +13,36 @@ export type MockClassifierProfile =
   | 'STRESS_TEST_SUSPICIOUS';
 
 export type InterventionBehavior =
-  | 'LOG_ONLY'
+  | 'PROTECTIVE_OVERLAY'
   | 'STATUS_NOTIFICATION'
-  | 'WARNING_BANNER_FUTURE';
+  | 'LOG_ONLY';
+
+export type ProtectionSensitivityMode = 'BALANCED' | 'STRICT';
+
+export type OverlayState =
+  | 'HIDDEN'
+  | 'PENDING'
+  | 'PROTECTED'
+  | 'RECOVERING'
+  | 'DISMISSED';
+
+export interface ProtectionActivitySummary {
+  overlayState: OverlayState | string;
+  overlayVisible: boolean;
+  activeProtectedPackage: string;
+  activeProtectedAppLabel: string;
+  activeTriggerCategory: string;
+  activeConfidence: number;
+  sensitivityMode: ProtectionSensitivityMode | string;
+  totalProtectionEvents: number;
+  protectedAppsCount: number;
+  protectedPackageNames: string[];
+  totalDismissals: number;
+  totalReturnToSafetyClicks: number;
+  totalAutoRecoveries: number;
+  cooldownRemainingMs: number;
+  lastOverlayError: string;
+}
 
 export interface ClassificationResult {
   scores: Record<string, number>;
@@ -102,6 +129,13 @@ export type ScreenGuardEvent =
   | {
       type: 'CLASSIFICATION_RESULT';
       result: ClassificationResult;
+    }
+  | {
+      type: 'PROTECTION_STATE_CHANGED';
+      summary: ProtectionActivitySummary;
+      directive?: string;
+      reasonSummary?: string;
+      timestamp?: number;
     };
 
 export type ActivityEventType =
@@ -141,6 +175,10 @@ export interface UserPreferences {
   confidenceThreshold: number;
   confirmationFramesRequired: number;
   interventionBehavior: InterventionBehavior;
+  sensitivityMode: ProtectionSensitivityMode;
+  interveneOnSuggestiveInStrict: boolean;
+  allowManualDismiss: boolean;
+  dismissCooldownSeconds: number;
   mockClassifierProfile: MockClassifierProfile;
   allowSelfPackageInDiagnostics: boolean;
 }
@@ -169,9 +207,12 @@ export interface BufferDiagnostics {
 
 export interface MonitoringStatus {
   accessibilityPermissionGranted: boolean;
+  overlayPermissionGranted: boolean;
   serviceConnected: boolean;
   protectionEnabled: boolean;
   monitoringActive: boolean;
+  sensitivityMode?: ProtectionSensitivityMode;
+  protectionSummary?: ProtectionActivitySummary;
   currentForegroundPackage: string;
   currentForegroundAppLabel: string;
   currentWindowId: number;

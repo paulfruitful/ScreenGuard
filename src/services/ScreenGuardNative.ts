@@ -12,6 +12,7 @@ import {
   EvalSampleMetadata,
   FullEvaluationReport,
   MonitoringStatus,
+  ProtectionActivitySummary,
   ScreenGuardEvent,
   SingleSampleEvalResult,
   UserPreferences,
@@ -20,6 +21,15 @@ import {
 interface ScreenGuardNativeModuleSpec {
   isAccessibilityPermissionEnabled(): Promise<boolean>;
   openAccessibilitySettings(): Promise<boolean>;
+  canDrawOverlays(): Promise<boolean>;
+  openOverlaySettings(): Promise<boolean>;
+  getProtectionSummary(): Promise<ProtectionActivitySummary>;
+  dismissActiveOverlay(): Promise<ProtectionActivitySummary>;
+  triggerOverlayTest(
+    category: string,
+    delayMs: number,
+    autoHideDurationMs: number,
+  ): Promise<ProtectionActivitySummary>;
   getMonitoringStatus(): Promise<MonitoringStatus>;
   setProtectionEnabled(enabled: boolean): Promise<MonitoringStatus>;
   getPreferences(): Promise<UserPreferences>;
@@ -67,21 +77,46 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
     'com.google.android.inputmethod.latin',
     'com.samsung.android.honeyboard',
   ],
-  samplingIntervalMs: 2500,
-  debounceDelayMs: 650,
+  samplingIntervalMs: 2000,
+  debounceDelayMs: 550,
   preferWindowCapture: true,
-  confidenceThreshold: 0.75,
-  confirmationFramesRequired: 3,
-  interventionBehavior: 'LOG_ONLY',
+  confidenceThreshold: 0.72,
+  confirmationFramesRequired: 2,
+  interventionBehavior: 'PROTECTIVE_OVERLAY',
+  sensitivityMode: 'BALANCED',
+  interveneOnSuggestiveInStrict: true,
+  allowManualDismiss: true,
+  dismissCooldownSeconds: 12,
   mockClassifierProfile: 'DETERMINISTIC_SAFE',
   allowSelfPackageInDiagnostics: true,
 };
 
+export const DEFAULT_PROTECTION_SUMMARY: ProtectionActivitySummary = {
+  overlayState: 'HIDDEN',
+  overlayVisible: false,
+  activeProtectedPackage: 'None',
+  activeProtectedAppLabel: 'None',
+  activeTriggerCategory: 'NONE',
+  activeConfidence: 0,
+  sensitivityMode: 'BALANCED',
+  totalProtectionEvents: 0,
+  protectedAppsCount: 0,
+  protectedPackageNames: [],
+  totalDismissals: 0,
+  totalReturnToSafetyClicks: 0,
+  totalAutoRecoveries: 0,
+  cooldownRemainingMs: 0,
+  lastOverlayError: 'NONE',
+};
+
 export const DEFAULT_STATUS: MonitoringStatus = {
   accessibilityPermissionGranted: false,
+  overlayPermissionGranted: false,
   serviceConnected: false,
   protectionEnabled: true,
   monitoringActive: false,
+  sensitivityMode: 'BALANCED',
+  protectionSummary: DEFAULT_PROTECTION_SUMMARY,
   currentForegroundPackage: 'None',
   currentForegroundAppLabel: 'No active window',
   currentWindowId: -1,
@@ -208,6 +243,30 @@ export const DEFAULT_COMPATIBILITY_TARGETS: AppCompatibilityRecord[] = [
     notes: 'Hardware-accelerated video surface composited into window buffer on Android 11+.',
   },
   {
+    packageName: 'com.twitter.android',
+    displayName: 'X (Twitter)',
+    category: 'Social Media',
+    outcome: 'UNTESTED',
+    lastTestedAt: null,
+    captureMethod: 'N/A',
+    resolution: 'N/A',
+    durationMs: 0,
+    errorCode: 'NONE',
+    notes: 'Timeline, media lightbox, and video player windows support window capture and full-screen protective overlay.',
+  },
+  {
+    packageName: 'com.facebook.katana',
+    displayName: 'Facebook',
+    category: 'Social Media',
+    outcome: 'UNTESTED',
+    lastTestedAt: null,
+    captureMethod: 'N/A',
+    resolution: 'N/A',
+    durationMs: 0,
+    errorCode: 'NONE',
+    notes: 'Feed, Reels, and Watch surfaces support accessibility window capture and full-screen protective overlay.',
+  },
+  {
     packageName: 'com.sec.android.app.launcher',
     displayName: 'Home Screen (One UI / System Launcher)',
     category: 'Launcher',
@@ -243,6 +302,35 @@ export const ScreenGuardNative = {
   async openAccessibilitySettings(): Promise<boolean> {
     const mod = ensureNativeModule();
     return mod.openAccessibilitySettings();
+  },
+
+  async canDrawOverlays(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.canDrawOverlays();
+  },
+
+  async openOverlaySettings(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.openOverlaySettings();
+  },
+
+  async getProtectionSummary(): Promise<ProtectionActivitySummary> {
+    const mod = ensureNativeModule();
+    return mod.getProtectionSummary();
+  },
+
+  async dismissActiveOverlay(): Promise<ProtectionActivitySummary> {
+    const mod = ensureNativeModule();
+    return mod.dismissActiveOverlay();
+  },
+
+  async triggerOverlayTest(
+    category = 'EXPLICIT',
+    delayMs = 0,
+    autoHideDurationMs = 0,
+  ): Promise<ProtectionActivitySummary> {
+    const mod = ensureNativeModule();
+    return mod.triggerOverlayTest(category, delayMs, autoHideDurationMs);
   },
 
   async getMonitoringStatus(): Promise<MonitoringStatus> {

@@ -12,6 +12,7 @@ import {colors, radius, spacing, typography} from '../theme/theme';
 import {
   InterventionBehavior,
   MockClassifierProfile,
+  ProtectionSensitivityMode,
   UserPreferences,
 } from '../types/screenguard';
 
@@ -20,26 +21,51 @@ interface SettingsScreenProps {
   onUpdatePreferences: (partial: Partial<UserPreferences>) => Promise<void>;
   onToggleProtection: (enabled: boolean) => void;
   onOpenAccessibilitySettings: () => void;
+  onOpenOverlaySettings: () => void;
 }
+
+const SENSITIVITY_OPTIONS: {
+  label: string;
+  value: ProtectionSensitivityMode;
+  desc: string;
+}[] = [
+  {
+    label: 'Balanced (Recommended)',
+    value: 'BALANCED',
+    desc: 'Displays the protective overlay on confirmed NUDITY, SEXUAL_ACTIVITY, and EXPLICIT content. Never triggers full-screen overlays on SUGGESTIVE or UNCERTAIN frames.',
+  },
+  {
+    label: 'Strict',
+    value: 'STRICT',
+    desc: 'Applies tighter category thresholds for NUDITY, SEXUAL_ACTIVITY, and EXPLICIT content, and optionally covers high-confidence confirmed SUGGESTIVE content.',
+  },
+];
 
 const SAMPLING_OPTIONS = [
   {label: '1.5s (Fast)', value: 1500},
-  {label: '2.5s (Balanced)', value: 2500},
-  {label: '4.0s (Battery Saver)', value: 4000},
-  {label: '6.0s (Low Frequency)', value: 6000},
+  {label: '2.0s (Balanced)', value: 2000},
+  {label: '3.0s (Standard)', value: 3000},
+  {label: '5.0s (Battery Saver)', value: 5000},
 ];
 
 const THRESHOLD_OPTIONS = [
-  {label: '60%', value: 0.6},
-  {label: '75%', value: 0.75},
-  {label: '85%', value: 0.85},
-  {label: '92%', value: 0.92},
+  {label: '62%', value: 0.62},
+  {label: '72%', value: 0.72},
+  {label: '80%', value: 0.8},
+  {label: '88%', value: 0.88},
 ];
 
 const CONFIRMATION_OPTIONS = [
   {label: '2 Frames', value: 2},
   {label: '3 Frames', value: 3},
-  {label: '5 Frames', value: 5},
+  {label: '4 Frames', value: 4},
+];
+
+const COOLDOWN_OPTIONS = [
+  {label: '10s', value: 10},
+  {label: '12s', value: 12},
+  {label: '15s', value: 15},
+  {label: '30s', value: 30},
 ];
 
 const INTERVENTION_OPTIONS: {
@@ -48,19 +74,19 @@ const INTERVENTION_OPTIONS: {
   desc: string;
 }[] = [
   {
+    label: 'Full-Screen Protective Overlay (Milestone 3 Active Shield)',
+    value: 'PROTECTIVE_OVERLAY',
+    desc: 'Covers confirmed explicit content with Screen Guard’s touch-blocking protective overlay and offers "Return to Safe Browsing".',
+  },
+  {
+    label: 'Status Notification Alert Only',
+    value: 'STATUS_NOTIFICATION',
+    desc: 'Updates local monitoring notification when confirmed threshold is met without covering the screen.',
+  },
+  {
     label: 'Log Only (Silent Observation)',
     value: 'LOG_ONLY',
-    desc: 'Records confirmed multi-frame detection metadata in Activity Log.',
-  },
-  {
-    label: 'Status Notification Alert',
-    value: 'STATUS_NOTIFICATION',
-    desc: 'Updates local monitoring notification when confirmed threshold is met.',
-  },
-  {
-    label: 'Shield Warning Banner (Future NSFW Milestone)',
-    value: 'WARNING_BANNER_FUTURE',
-    desc: 'Reserved for Milestone 2 after real LiteRT/ONNX NSFW model integration.',
+    desc: 'Records confirmed multi-frame detection metadata in Activity Log without visual intervention.',
   },
 ];
 
@@ -99,6 +125,7 @@ export function SettingsScreen({
   onUpdatePreferences,
   onToggleProtection,
   onOpenAccessibilitySettings,
+  onOpenOverlaySettings,
 }: SettingsScreenProps) {
   const [customPackage, setCustomPackage] = useState('');
 
@@ -128,16 +155,16 @@ export function SettingsScreen({
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}>
-      {/* Protection Control */}
+      {/* Protection Control & Permissions */}
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Protection & Capture Engine</Text>
+        <Text style={styles.sectionTitle}>Protection & Permissions</Text>
 
         <View style={styles.switchRow}>
           <View style={styles.switchTextCol}>
             <Text style={styles.rowTitle}>Screen Guard Protection</Text>
             <Text style={styles.rowSubtitle}>
-              Observe active window transitions and run on-device screenshot
-              pipeline.
+              Observe active window transitions, classify content on-device, and
+              display protective overlays when policy violations are confirmed.
             </Text>
           </View>
           <Switch
@@ -175,6 +202,116 @@ export function SettingsScreen({
             Manage or Revoke Android Accessibility Access
           </Text>
         </Pressable>
+
+        <Pressable
+          onPress={onOpenOverlaySettings}
+          style={[styles.outlineButton, {marginTop: spacing.xs + 4}]}>
+          <Text style={styles.outlineButtonText}>
+            Manage Display Over Other Apps Permission
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Milestone 3 Section 10.1: Protection Sensitivity & Overlay Policy */}
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>
+          Protection Sensitivity & Overlay Policy
+        </Text>
+        <Text style={styles.helperText}>
+          Choose how Screen Guard maps on-device classification categories (
+          EXPLICIT, NUDITY, SEXUAL_ACTIVITY, SUGGESTIVE, NON_EXPLICIT,
+          UNCERTAIN) to protective overlay interventions.
+        </Text>
+
+        {SENSITIVITY_OPTIONS.map(opt => {
+          const active =
+            (preferences.sensitivityMode || 'BALANCED') === opt.value;
+          return (
+            <Pressable
+              key={opt.value}
+              onPress={() => onUpdatePreferences({sensitivityMode: opt.value})}
+              style={[styles.radioCard, active && styles.radioCardActive]}>
+              <Text style={styles.radioTitle}>{opt.label}</Text>
+              <Text style={styles.radioDesc}>{opt.desc}</Text>
+            </Pressable>
+          );
+        })}
+
+        {preferences.sensitivityMode === 'STRICT' && (
+          <View style={[styles.switchRow, styles.rowBorderTop]}>
+            <View style={styles.switchTextCol}>
+              <Text style={styles.rowTitle}>
+                Cover High-Confidence Suggestive Content in Strict Mode
+              </Text>
+              <Text style={styles.rowSubtitle}>
+                When Strict mode is active, display the protective overlay if
+                SUGGESTIVE content exceeds 76% confidence across consecutive
+                frames.
+              </Text>
+            </View>
+            <Switch
+              value={preferences.interveneOnSuggestiveInStrict}
+              onValueChange={val =>
+                onUpdatePreferences({interveneOnSuggestiveInStrict: val})
+              }
+              trackColor={{false: colors.borderStrong, true: colors.accent}}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+        )}
+
+        <View style={[styles.switchRow, styles.rowBorderTop]}>
+          <View style={styles.switchTextCol}>
+            <Text style={styles.rowTitle}>
+              Allow Manual Overlay Dismissal ("Dismiss for This Screen")
+            </Text>
+            <Text style={styles.rowSubtitle}>
+              Show the secondary dismiss action on the protective overlay with a
+              temporary per-app cooldown.
+            </Text>
+          </View>
+          <Switch
+            value={preferences.allowManualDismiss}
+            onValueChange={val =>
+              onUpdatePreferences({allowManualDismiss: val})
+            }
+            trackColor={{false: colors.borderStrong, true: colors.accent}}
+            thumbColor="#FFFFFF"
+          />
+        </View>
+
+        {preferences.allowManualDismiss && (
+          <>
+            <Text style={[styles.fieldLabel, {marginTop: spacing.sm}]}>
+              Dismissal Cooldown Duration
+            </Text>
+            <View style={styles.pillGrid}>
+              {COOLDOWN_OPTIONS.map(opt => {
+                const active =
+                  (preferences.dismissCooldownSeconds || 12) === opt.value;
+                return (
+                  <Pressable
+                    key={opt.value}
+                    onPress={() =>
+                      onUpdatePreferences({dismissCooldownSeconds: opt.value})
+                    }
+                    style={[
+                      styles.choicePill,
+                      active && styles.choicePillActive,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.choicePillText,
+                        active && styles.choicePillTextActive,
+                      ]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        )}
       </View>
 
       {/* Sampling Frequency & Cooldown */}
@@ -216,15 +353,16 @@ export function SettingsScreen({
           Detection Confidence & Multi-Frame Confirmation
         </Text>
         <Text style={styles.helperText}>
-          A single suspicious frame never triggers an automatic intervention.
-          Consecutive detections across sampled frames are required.
+          Category-specific thresholds are scaled from the base confidence
+          threshold below, and consecutive positive frames are required before
+          transitioning from PENDING to PROTECTED.
         </Text>
 
-        <Text style={styles.fieldLabel}>Confidence Threshold</Text>
+        <Text style={styles.fieldLabel}>Base Confidence Threshold</Text>
         <View style={styles.pillGrid}>
           {THRESHOLD_OPTIONS.map(opt => {
             const active =
-              Math.abs(preferences.confidenceThreshold - opt.value) < 0.01;
+              Math.abs(preferences.confidenceThreshold - opt.value) < 0.02;
             return (
               <Pressable
                 key={opt.value}
@@ -272,9 +410,7 @@ export function SettingsScreen({
 
       {/* Intervention Behavior & Mock Classifier Profile */}
       <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>
-          Intervention Behavior (Future NSFW Model Milestone)
-        </Text>
+        <Text style={styles.sectionTitle}>Intervention Mode</Text>
         {INTERVENTION_OPTIONS.map(opt => {
           const active = preferences.interventionBehavior === opt.value;
           return (
@@ -295,7 +431,7 @@ export function SettingsScreen({
             styles.sectionTitle,
             {marginTop: spacing.lg, marginBottom: spacing.xs},
           ]}>
-          Mock Classifier Simulation Profile (Dev / Testing)
+          Fallback Simulation Profile (Dev / Testing)
         </Text>
         {MOCK_PROFILES.map(opt => {
           const active = preferences.mockClassifierProfile === opt.value;
@@ -317,8 +453,8 @@ export function SettingsScreen({
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Excluded Applications</Text>
         <Text style={styles.helperText}>
-          Screen Guard will never request screenshots when an excluded package
-          is in the foreground.
+          Screen Guard will never request screenshots or display protective
+          overlays when an excluded package is in the foreground.
         </Text>
 
         <View style={styles.inputRow}>
@@ -387,8 +523,9 @@ export function SettingsScreen({
             • Standard foreground application surfaces on Android 11+ via
             AccessibilityService.takeScreenshot() and Android 14+ via
             AccessibilityService.takeScreenshotOfWindow().{'\n'}• Browser pages
-            (normal tabs), social media feeds, and non-DRM video surfaces after
-            debounced window/content/scroll settles.
+            (normal tabs), social media feeds (Instagram, TikTok, X, Facebook,
+            YouTube), and non-DRM video surfaces after debounced
+            window/content/scroll settles.
           </Text>
         </View>
 
@@ -407,7 +544,7 @@ export function SettingsScreen({
             nodes, and never reads clipboard or private messages.{'\n'}• Zero
             Disk or Cloud Persistence: Screenshots are downsampled in RAM,
             HardwareBuffers are closed immediately, and images are never saved
-            to storage or uploaded.
+            to storage, uploaded, or shown as thumbnails on the overlay.
           </Text>
         </View>
       </View>

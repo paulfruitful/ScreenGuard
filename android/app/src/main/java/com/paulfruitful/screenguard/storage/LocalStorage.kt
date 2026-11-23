@@ -13,14 +13,26 @@ data class UserPreferencesData(
         "com.google.android.inputmethod.latin",
         "com.samsung.android.honeyboard"
     ),
-    val samplingIntervalMs: Long = 2500L,
-    val debounceDelayMs: Long = 650L,
+    val samplingIntervalMs: Long = 2000L,
+    val debounceDelayMs: Long = 550L,
     val preferWindowCapture: Boolean = true,
-    val confidenceThreshold: Float = 0.75f,
-    val confirmationFramesRequired: Int = 3,
-    val interventionBehavior: String = "LOG_ONLY",
+    val confidenceThreshold: Float = 0.72f,
+    val confirmationFramesRequired: Int = 2,
+    val interventionBehavior: String = "PROTECTIVE_OVERLAY",
+    val sensitivityMode: String = "BALANCED",
+    val interveneOnSuggestiveInStrict: Boolean = true,
+    val allowManualDismiss: Boolean = true,
+    val dismissCooldownSeconds: Int = 12,
     val mockClassifierProfile: String = "DETERMINISTIC_SAFE",
     val allowSelfPackageInDiagnostics: Boolean = true
+)
+
+data class ProtectionStatsData(
+    val totalProtectionEvents: Int = 0,
+    val protectedPackages: Set<String> = emptySet(),
+    val totalDismissals: Int = 0,
+    val totalReturnToSafetyClicks: Int = 0,
+    val totalAutoRecoveries: Int = 0
 )
 
 data class ActivityLogRecord(
@@ -62,6 +74,7 @@ object LocalStorage {
     private const val KEY_ACTIVITY_LOGS = "activity_logs_v1"
     private const val KEY_COMPATIBILITY_RECORDS = "compatibility_records_v1"
     private const val KEY_EVALUATION_REPORT = "evaluation_report_v1"
+    private const val KEY_PROTECTION_STATS = "protection_stats_v1"
     private const val MAX_LOG_ENTRIES = 180
 
     private val lock = Any()
@@ -124,12 +137,16 @@ object LocalStorage {
             UserPreferencesData(
                 protectionEnabled = obj.optBoolean("protectionEnabled", true),
                 excludedPackages = excludedSet,
-                samplingIntervalMs = obj.optLong("samplingIntervalMs", 2500L).coerceAtLeast(1050L),
-                debounceDelayMs = obj.optLong("debounceDelayMs", 650L).coerceIn(150L, 5000L),
+                samplingIntervalMs = obj.optLong("samplingIntervalMs", 2000L).coerceAtLeast(1050L),
+                debounceDelayMs = obj.optLong("debounceDelayMs", 550L).coerceIn(150L, 5000L),
                 preferWindowCapture = obj.optBoolean("preferWindowCapture", true),
-                confidenceThreshold = obj.optDouble("confidenceThreshold", 0.75).toFloat().coerceIn(0.3f, 0.99f),
-                confirmationFramesRequired = obj.optInt("confirmationFramesRequired", 3).coerceIn(1, 10),
-                interventionBehavior = obj.optString("interventionBehavior", "LOG_ONLY"),
+                confidenceThreshold = obj.optDouble("confidenceThreshold", 0.72).toFloat().coerceIn(0.3f, 0.99f),
+                confirmationFramesRequired = obj.optInt("confirmationFramesRequired", 2).coerceIn(1, 10),
+                interventionBehavior = obj.optString("interventionBehavior", "PROTECTIVE_OVERLAY"),
+                sensitivityMode = obj.optString("sensitivityMode", "BALANCED").uppercase(),
+                interveneOnSuggestiveInStrict = obj.optBoolean("interveneOnSuggestiveInStrict", true),
+                allowManualDismiss = obj.optBoolean("allowManualDismiss", true),
+                dismissCooldownSeconds = obj.optInt("dismissCooldownSeconds", 12).coerceIn(3, 120),
                 mockClassifierProfile = obj.optString("mockClassifierProfile", "DETERMINISTIC_SAFE"),
                 allowSelfPackageInDiagnostics = obj.optBoolean("allowSelfPackageInDiagnostics", true)
             )
@@ -188,6 +205,19 @@ object LocalStorage {
                 interventionBehavior = if (patch.has("interventionBehavior")) {
                     patch.optString("interventionBehavior", current.interventionBehavior)
                 } else current.interventionBehavior,
+                sensitivityMode = if (patch.has("sensitivityMode")) {
+                    val rawMode = patch.optString("sensitivityMode", current.sensitivityMode).uppercase()
+                    if (rawMode == "STRICT") "STRICT" else "BALANCED"
+                } else current.sensitivityMode,
+                interveneOnSuggestiveInStrict = if (patch.has("interveneOnSuggestiveInStrict")) {
+                    patch.optBoolean("interveneOnSuggestiveInStrict", current.interveneOnSuggestiveInStrict)
+                } else current.interveneOnSuggestiveInStrict,
+                allowManualDismiss = if (patch.has("allowManualDismiss")) {
+                    patch.optBoolean("allowManualDismiss", current.allowManualDismiss)
+                } else current.allowManualDismiss,
+                dismissCooldownSeconds = if (patch.has("dismissCooldownSeconds")) {
+                    patch.optInt("dismissCooldownSeconds", current.dismissCooldownSeconds).coerceIn(3, 120)
+                } else current.dismissCooldownSeconds,
                 mockClassifierProfile = if (patch.has("mockClassifierProfile")) {
                     patch.optString("mockClassifierProfile", current.mockClassifierProfile)
                 } else current.mockClassifierProfile,
@@ -223,10 +253,121 @@ object LocalStorage {
             put("confidenceThreshold", prefs.confidenceThreshold.toDouble())
             put("confirmationFramesRequired", prefs.confirmationFramesRequired)
             put("interventionBehavior", prefs.interventionBehavior)
+            put("sensitivityMode", prefs.sensitivityMode)
+            put("interveneOnSuggestiveInStrict", prefs.interveneOnSuggestiveInStrict)
+            put("allowManualDismiss", prefs.allowManualDismiss)
+            put("dismissCooldownSeconds", prefs.dismissCooldownSeconds)
             put("mockClassifierProfile", prefs.mockClassifierProfile)
             put("allowSelfPackageInDiagnostics", prefs.allowSelfPackageInDiagnostics)
         }
         sp.edit().putString(KEY_USER_PREFS, obj.toString()).apply()
+    }
+
+    fun getProtectionStats(context: Context? = null): ProtectionStatsData {
+        synchronized(lock) {
+            val sp = try {
+                requirePrefs(context)
+            } catch (_: Exception) {
+                return ProtectionStatsData()
+            }
+            val raw = sp.getString(KEY_PROTECTION_STATS, null) ?: return ProtectionStatsData()
+            return try {
+                val obj = JSONObject(raw)
+                val pkgArr = obj.optJSONArray("protectedPackages")
+                val pkgSet = mutableSetOf<String>()
+                if (pkgArr != null) {
+                    for (i in 0 until pkgArr.length()) {
+                        val pkg = pkgArr.optString(i).trim()
+                        if (pkg.isNotEmpty()) pkgSet.add(pkg)
+                    }
+                }
+                ProtectionStatsData(
+                    totalProtectionEvents = obj.optInt("totalProtectionEvents", 0),
+                    protectedPackages = pkgSet,
+                    totalDismissals = obj.optInt("totalDismissals", 0),
+                    totalReturnToSafetyClicks = obj.optInt("totalReturnToSafetyClicks", 0),
+                    totalAutoRecoveries = obj.optInt("totalAutoRecoveries", 0)
+                )
+            } catch (_: Exception) {
+                ProtectionStatsData()
+            }
+        }
+    }
+
+    private fun saveProtectionStatsInternal(sp: SharedPreferences, stats: ProtectionStatsData) {
+        val obj = JSONObject().apply {
+            put("totalProtectionEvents", stats.totalProtectionEvents)
+            put("protectedPackages", JSONArray(stats.protectedPackages.toList()))
+            put("totalDismissals", stats.totalDismissals)
+            put("totalReturnToSafetyClicks", stats.totalReturnToSafetyClicks)
+            put("totalAutoRecoveries", stats.totalAutoRecoveries)
+        }
+        sp.edit().putString(KEY_PROTECTION_STATS, obj.toString()).apply()
+    }
+
+    fun recordProtectionTriggered(context: Context? = null, packageName: String): ProtectionStatsData {
+        synchronized(lock) {
+            val sp = try {
+                requirePrefs(context)
+            } catch (_: Exception) {
+                return ProtectionStatsData()
+            }
+            val current = getProtectionStats(context)
+            val nextPackages = current.protectedPackages.toMutableSet()
+            if (packageName.isNotBlank() && packageName != "None") {
+                nextPackages.add(packageName)
+            }
+            val updated = current.copy(
+                totalProtectionEvents = current.totalProtectionEvents + 1,
+                protectedPackages = nextPackages
+            )
+            saveProtectionStatsInternal(sp, updated)
+            return updated
+        }
+    }
+
+    fun recordProtectionDismissed(context: Context? = null): ProtectionStatsData {
+        synchronized(lock) {
+            val sp = try {
+                requirePrefs(context)
+            } catch (_: Exception) {
+                return ProtectionStatsData()
+            }
+            val current = getProtectionStats(context)
+            val updated = current.copy(totalDismissals = current.totalDismissals + 1)
+            saveProtectionStatsInternal(sp, updated)
+            return updated
+        }
+    }
+
+    fun recordReturnToSafetyClicked(context: Context? = null): ProtectionStatsData {
+        synchronized(lock) {
+            val sp = try {
+                requirePrefs(context)
+            } catch (_: Exception) {
+                return ProtectionStatsData()
+            }
+            val current = getProtectionStats(context)
+            val updated = current.copy(
+                totalReturnToSafetyClicks = current.totalReturnToSafetyClicks + 1
+            )
+            saveProtectionStatsInternal(sp, updated)
+            return updated
+        }
+    }
+
+    fun recordAutoRecovery(context: Context? = null): ProtectionStatsData {
+        synchronized(lock) {
+            val sp = try {
+                requirePrefs(context)
+            } catch (_: Exception) {
+                return ProtectionStatsData()
+            }
+            val current = getProtectionStats(context)
+            val updated = current.copy(totalAutoRecoveries = current.totalAutoRecoveries + 1)
+            saveProtectionStatsInternal(sp, updated)
+            return updated
+        }
     }
 
     fun appendActivityLog(context: Context? = null, record: ActivityLogRecord) {
@@ -328,7 +469,6 @@ object LocalStorage {
 
     private fun ensureDefaultCompatibilityRecords() {
         val sp = prefsInstance ?: return
-        if (sp.contains(KEY_COMPATIBILITY_RECORDS)) return
         val defaults = listOf(
             AppCompatibilityEntry(
                 packageName = "com.android.settings",
@@ -352,7 +492,7 @@ object LocalStorage {
                 resolution = "N/A",
                 durationMs = 0L,
                 errorCode = "NONE",
-                notes = "Normal tabs support takeScreenshotOfWindow/takeScreenshot; Incognito tabs enforce FLAG_SECURE."
+                notes = "Normal tabs support takeScreenshotOfWindow/takeScreenshot + TYPE_ACCESSIBILITY_OVERLAY; Incognito tabs enforce FLAG_SECURE."
             ),
             AppCompatibilityEntry(
                 packageName = "com.google.android.youtube",
@@ -364,7 +504,7 @@ object LocalStorage {
                 resolution = "N/A",
                 durationMs = 0L,
                 errorCode = "NONE",
-                notes = "Standard video feeds are capturable; DRM-protected Movies/TV purchases block surface capture."
+                notes = "Standard video feeds are capturable & coverable; DRM-protected Movies/TV purchases block surface capture."
             ),
             AppCompatibilityEntry(
                 packageName = "com.instagram.android",
@@ -376,7 +516,7 @@ object LocalStorage {
                 resolution = "N/A",
                 durationMs = 0L,
                 errorCode = "NONE",
-                notes = "Feed, Reels, and Stories windows are capturable; view-once direct media may set FLAG_SECURE."
+                notes = "Feed, Reels, and Stories windows are capturable & coverable; view-once direct media may set FLAG_SECURE."
             ),
             AppCompatibilityEntry(
                 packageName = "com.zhiliaoapp.musically",
@@ -391,6 +531,30 @@ object LocalStorage {
                 notes = "Hardware-accelerated video surface composited into window buffer on Android 11+."
             ),
             AppCompatibilityEntry(
+                packageName = "com.twitter.android",
+                displayName = "X (Twitter)",
+                category = "Social Media",
+                outcome = "UNTESTED",
+                lastTestedAt = null,
+                captureMethod = "N/A",
+                resolution = "N/A",
+                durationMs = 0L,
+                errorCode = "NONE",
+                notes = "Timeline, media lightbox, and video player windows support window capture and full-screen protective overlay."
+            ),
+            AppCompatibilityEntry(
+                packageName = "com.facebook.katana",
+                displayName = "Facebook",
+                category = "Social Media",
+                outcome = "UNTESTED",
+                lastTestedAt = null,
+                captureMethod = "N/A",
+                resolution = "N/A",
+                durationMs = 0L,
+                errorCode = "NONE",
+                notes = "Feed, Reels, and Watch surfaces support accessibility window capture and full-screen protective overlay."
+            ),
+            AppCompatibilityEntry(
                 packageName = "com.sec.android.app.launcher",
                 displayName = "Home Screen (One UI / System Launcher)",
                 category = "Launcher",
@@ -403,7 +567,21 @@ object LocalStorage {
                 notes = "Home screen workspace and app drawer windows."
             )
         )
-        saveCompatibilityRecordsInternal(defaults)
+        if (!sp.contains(KEY_COMPATIBILITY_RECORDS)) {
+            saveCompatibilityRecordsInternal(defaults)
+            return
+        }
+        val current = getCompatibilityRecords().toMutableList()
+        var changed = false
+        for (def in defaults) {
+            if (current.none { it.packageName.equals(def.packageName, ignoreCase = true) }) {
+                current.add(def)
+                changed = true
+            }
+        }
+        if (changed) {
+            saveCompatibilityRecordsInternal(current)
+        }
     }
 
     fun getCompatibilityRecords(context: Context? = null): List<AppCompatibilityEntry> {

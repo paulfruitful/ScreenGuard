@@ -1,8 +1,13 @@
 package com.paulfruitful.screenguard.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.res.Configuration
+import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
 import android.view.accessibility.AccessibilityEvent
@@ -13,6 +18,7 @@ import com.paulfruitful.screenguard.capture.ProcessedScreenshotOutcome
 import com.paulfruitful.screenguard.capture.ScreenshotProcessor
 import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
 import com.paulfruitful.screenguard.classifier.DetectionEngine
+import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.LocalStorage
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +46,20 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
     private lateinit var eventDebouncer: EventDebouncer
+    private var screenStateReceiverRegistered = false
+
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                if (::eventDebouncer.isInitialized) {
+                    eventDebouncer.cancelAll()
+                }
+                ScreenshotProcessor.clearVolatileDebugPreview()
+                DetectionEngine.resetConfirmationState()
+                ProtectionCoordinator.onScreenTurnedOff(applicationContext)
+            }
+        }
+    }
 
     companion object {
         private const val SELF_PACKAGE = "com.paulfruitful.screenguard"
@@ -118,6 +138,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             activeService?.eventDebouncer?.cancelAll()
             ScreenshotProcessor.clearVolatileDebugPreview()
             DetectionEngine.resetConfirmationState()
+            ProtectionCoordinator.onServiceDisconnected(context)
             BufferReleaseTracker.onServiceDisconnected()
 
             LocalStorage.appendActivityLog(
@@ -152,6 +173,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         super.onCreate()
         LocalStorage.init(applicationContext)
         DetectionEngine.init(applicationContext)
+        ProtectionCoordinator.init(applicationContext)
         eventDebouncer = EventDebouncer(serviceScope)
     }
 
@@ -159,6 +181,8 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         instance = this
         BufferReleaseTracker.onServiceConnected()
+        ProtectionCoordinator.init(applicationContext)
+        registerScreenOffReceiver()
 
         val prefs = LocalStorage.getPreferences(applicationContext)
         val resolved = ActiveWindowResolver.resolve(
@@ -218,6 +242,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (!isScreenInteractive()) return
 
         val eventType = event.eventType
         val isSupportedEvent =
@@ -270,6 +295,12 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             currentForegroundPackage = newPkg
             currentForegroundAppLabel = resolved.appLabel
             DetectionEngine.onForegroundPackageChanged(newPkg)
+            ProtectionCoordinator.onForegroundAppChanged(
+                context = applicationContext,
+                newPackageName = newPkg,
+                newAppLabel = resolved.appLabel,
+                windowId = newWinId
+            )
 
             val isExcluded = prefs.excludedPackages.contains(newPkg) ||
                 newPkg == SELF_PACKAGE
@@ -479,6 +510,11 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 )
 
                 val prefs = LocalStorage.getPreferences(applicationContext)
+                ProtectionCoordinator.onClassificationResult(
+                    context = applicationContext,
+                    result = classification,
+                    appLabel = currentForegroundAppLabel
+                )
                 if (classification.confirmedIntervention &&
                     prefs.interventionBehavior == "STATUS_NOTIFICATION"
                 ) {
@@ -533,6 +569,11 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         )
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        ProtectionCoordinator.onConfigurationChanged(newConfig)
+    }
+
     override fun onInterrupt() {
         if (::eventDebouncer.isInitialized) {
             eventDebouncer.cancelAll()
@@ -560,7 +601,44 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    private fun isScreenInteractive(): Boolean {
+        return try {
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+            pm?.isInteractive ?: true
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    private fun registerScreenOffReceiver() {
+        if (screenStateReceiverRegistered) return
+        try {
+            val filter = IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(screenStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(screenStateReceiver, filter)
+            }
+            screenStateReceiverRegistered = true
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun unregisterScreenOffReceiver() {
+        if (!screenStateReceiverRegistered) return
+        try {
+            unregisterReceiver(screenStateReceiver)
+        } catch (_: Exception) {
+        } finally {
+            screenStateReceiverRegistered = false
+        }
+    }
+
     private fun cleanupOnDisconnect(reason: String) {
+        unregisterScreenOffReceiver()
         if (instance === this) {
             instance = null
         }
@@ -569,6 +647,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         }
         ScreenshotProcessor.clearVolatileDebugPreview()
         DetectionEngine.resetConfirmationState()
+        ProtectionCoordinator.onServiceDisconnected(applicationContext)
         BufferReleaseTracker.onServiceDisconnected()
         MonitoringNotificationManager.dismiss(applicationContext)
 

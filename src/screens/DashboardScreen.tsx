@@ -9,13 +9,26 @@ import {
 import {MetricRow} from '../components/MetricRow';
 import {StatusBadge} from '../components/StatusBadge';
 import {colors, radius, spacing, typography} from '../theme/theme';
-import {MonitoringStatus, UserPreferences} from '../types/screenguard';
+import {
+  MonitoringStatus,
+  ProtectionActivitySummary,
+  ProtectionSensitivityMode,
+  UserPreferences,
+} from '../types/screenguard';
 
 interface DashboardScreenProps {
   status: MonitoringStatus;
   preferences: UserPreferences;
   onOpenAccessibilitySettings: () => void;
+  onOpenOverlaySettings: () => void;
   onToggleProtection: (enabled: boolean) => void;
+  onUpdatePreferences: (partial: Partial<UserPreferences>) => Promise<void>;
+  onTriggerOverlayTest: (
+    category?: string,
+    delayMs?: number,
+    autoHideDurationMs?: number,
+  ) => Promise<ProtectionActivitySummary | null>;
+  onDismissOverlay: () => Promise<ProtectionActivitySummary | null>;
   onNavigateToTesting: () => void;
   onNavigateToClassifier: () => void;
   onRefresh: () => void;
@@ -25,14 +38,41 @@ export function DashboardScreen({
   status,
   preferences,
   onOpenAccessibilitySettings,
+  onOpenOverlaySettings,
   onToggleProtection,
+  onUpdatePreferences,
+  onTriggerOverlayTest,
+  onDismissOverlay,
   onNavigateToTesting,
   onNavigateToClassifier,
   onRefresh,
 }: DashboardScreenProps) {
   const permissionGranted = status.accessibilityPermissionGranted;
+  const overlayPermissionGranted = status.overlayPermissionGranted;
   const serviceActive = permissionGranted && status.serviceConnected;
   const monitoringActive = serviceActive && status.protectionEnabled;
+  const overlayEngineReady = serviceActive || overlayPermissionGranted;
+
+  const summary = status.protectionSummary || {
+    overlayState: 'HIDDEN',
+    overlayVisible: false,
+    activeProtectedPackage: 'None',
+    activeProtectedAppLabel: 'None',
+    activeTriggerCategory: 'NONE',
+    activeConfidence: 0,
+    sensitivityMode: preferences.sensitivityMode || 'BALANCED',
+    totalProtectionEvents: status.totalConfirmedInterventions || 0,
+    protectedAppsCount: 0,
+    protectedPackageNames: [],
+    totalDismissals: 0,
+    totalReturnToSafetyClicks: 0,
+    totalAutoRecoveries: 0,
+    cooldownRemainingMs: 0,
+    lastOverlayError: 'NONE',
+  };
+
+  const activeSensitivity: ProtectionSensitivityMode =
+    preferences.sensitivityMode === 'STRICT' ? 'STRICT' : 'BALANCED';
 
   const handlePrimaryAction = () => {
     if (!permissionGranted) {
@@ -43,6 +83,23 @@ export function DashboardScreen({
   };
 
   const latest = status.latestClassification;
+
+  const getOverlayStateTone = (
+    state: string,
+  ): 'success' | 'warning' | 'danger' | 'accent' | 'neutral' => {
+    switch (state) {
+      case 'PROTECTED':
+        return 'danger';
+      case 'PENDING':
+      case 'RECOVERING':
+        return 'warning';
+      case 'DISMISSED':
+        return 'accent';
+      case 'HIDDEN':
+      default:
+        return 'success';
+    }
+  };
 
   return (
     <ScrollView
@@ -57,7 +114,7 @@ export function DashboardScreen({
               !permissionGranted
                 ? 'Permission Required'
                 : monitoringActive
-                ? 'Protection Active'
+                ? `Protection Active · ${activeSensitivity}`
                 : 'Protection Paused'
             }
             tone={
@@ -75,19 +132,48 @@ export function DashboardScreen({
 
         <Text style={styles.heroTitle}>
           {!permissionGranted
-            ? 'Accessibility Access Needed'
+            ? 'Enable Screen Guard Protection'
             : monitoringActive
-            ? 'Screen Guard is Observing Active Windows'
-            : 'Observation Paused by User'}
+            ? 'System-Wide Content Filtering Active'
+            : 'Protection Paused by User'}
         </Text>
 
         <Text style={styles.heroSubtitle}>
           {!permissionGranted
-            ? 'Enable Screen Guard in Android Accessibility Settings to allow event-driven on-device window observation and LiteRT NSFW classification.'
+            ? 'Screen Guard requires Android Accessibility access to observe active app windows, run on-device LiteRT classification, and display a protective overlay when explicit content is confirmed.'
             : monitoringActive
-            ? `On-device LiteRT inference active (${preferences.samplingIntervalMs}ms cooldown, ${preferences.debounceDelayMs}ms debounce). HardwareBuffers are released immediately after 224×224 downsampling.`
-            : 'Accessibility Service is bound, but screenshot capture and LiteRT classification are paused.'}
+            ? `Observing foreground applications in ${activeSensitivity} mode (${preferences.confirmationFramesRequired}-frame confirmation, ${preferences.samplingIntervalMs}ms cooldown). Zero screenshots leave the device.`
+            : 'Accessibility Service is bound, but window observation and protective overlays are currently paused.'}
         </Text>
+
+        {/* Sensitivity Quick Selector (Balanced vs Strict) */}
+        <View style={styles.sensitivityRow}>
+          <Text style={styles.sensitivityLabel}>Protection Sensitivity:</Text>
+          <View style={styles.sensitivityPills}>
+            {(['BALANCED', 'STRICT'] as ProtectionSensitivityMode[]).map(
+              mode => {
+                const isSelected = activeSensitivity === mode;
+                return (
+                  <Pressable
+                    key={mode}
+                    onPress={() => onUpdatePreferences({sensitivityMode: mode})}
+                    style={[
+                      styles.sensitivityPill,
+                      isSelected && styles.sensitivityPillActive,
+                    ]}>
+                    <Text
+                      style={[
+                        styles.sensitivityPillText,
+                        isSelected && styles.sensitivityPillTextActive,
+                      ]}>
+                      {mode === 'BALANCED' ? 'Balanced' : 'Strict'}
+                    </Text>
+                  </Pressable>
+                );
+              },
+            )}
+          </View>
+        </View>
 
         <Pressable
           onPress={handlePrimaryAction}
@@ -111,11 +197,22 @@ export function DashboardScreen({
               ? 'Enable Protection in Accessibility Settings'
               : monitoringActive
               ? 'Pause Protection'
-              : 'Enable Protection'}
+              : 'Resume Protection'}
           </Text>
         </Pressable>
 
         <View style={styles.quickActionRow}>
+          <Pressable
+            onPress={() => onTriggerOverlayTest('EXPLICIT', 0, 0)}
+            disabled={!overlayEngineReady}
+            style={[
+              styles.secondaryButton,
+              !overlayEngineReady && {opacity: 0.5},
+            ]}>
+            <Text style={styles.secondaryButtonText}>
+              Preview Protective Shield
+            </Text>
+          </Pressable>
           <Pressable
             onPress={onNavigateToClassifier}
             style={styles.secondaryButton}>
@@ -126,8 +223,194 @@ export function DashboardScreen({
           <Pressable
             onPress={onNavigateToTesting}
             style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>
-              Capture Diagnostics
+            <Text style={styles.secondaryButtonText}>Overlay & App Tests</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Milestone 3 Section 10.3: Protection Activity Summary Card */}
+      <View style={styles.sectionCard}>
+        <View style={styles.cardHeaderInline}>
+          <Text style={styles.sectionTitle}>Protection Activity Summary</Text>
+          <StatusBadge
+            label={`STATE: ${summary.overlayState}`}
+            tone={getOverlayStateTone(summary.overlayState)}
+            showDot
+          />
+        </View>
+
+        <View style={styles.counterGrid}>
+          <View style={styles.counterBox}>
+            <Text
+              style={[
+                styles.counterValue,
+                summary.totalProtectionEvents > 0 && {color: '#60A5FA'},
+              ]}>
+              {summary.totalProtectionEvents}
+            </Text>
+            <Text style={styles.counterLabel}>Protection Events</Text>
+          </View>
+          <View style={styles.counterBox}>
+            <Text style={styles.counterValue}>
+              {summary.protectedAppsCount}
+            </Text>
+            <Text style={styles.counterLabel}>Apps Protected</Text>
+          </View>
+          <View style={styles.counterBox}>
+            <Text style={styles.counterValue}>
+              {summary.totalReturnToSafetyClicks}
+            </Text>
+            <Text style={styles.counterLabel}>Safe Returns</Text>
+          </View>
+          <View style={styles.counterBox}>
+            <Text style={styles.counterValue}>
+              {summary.totalAutoRecoveries}
+            </Text>
+            <Text style={styles.counterLabel}>Auto-Recovered</Text>
+          </View>
+        </View>
+
+        <MetricRow
+          label="Current Protection State"
+          value={summary.overlayState}
+          valueColor={
+            summary.overlayState === 'PROTECTED'
+              ? colors.danger
+              : summary.overlayState === 'PENDING' ||
+                summary.overlayState === 'RECOVERING'
+              ? colors.warning
+              : colors.success
+          }
+          subValue={
+            summary.overlayVisible
+              ? `Covering ${summary.activeProtectedAppLabel} (${summary.activeProtectedPackage}) · Trigger: ${summary.activeTriggerCategory}`
+              : summary.cooldownRemainingMs > 0
+              ? `Dismissal cooldown active (${Math.ceil(
+                  summary.cooldownRemainingMs / 1000,
+                )}s remaining)`
+              : 'No protective overlay currently displayed'
+          }
+          mono
+        />
+        <MetricRow
+          label="Active Sensitivity Policy"
+          value={
+            activeSensitivity === 'STRICT'
+              ? 'STRICT (Explicit, Nudity, Sexual Activity + High-Conf Suggestive)'
+              : 'BALANCED (Explicit, Nudity, Sexual Activity only)'
+          }
+          subValue={`Manual Dismiss: ${
+            preferences.allowManualDismiss
+              ? `Allowed (${preferences.dismissCooldownSeconds}s cooldown)`
+              : 'Disabled'
+          } · User Dismissals: ${summary.totalDismissals}`}
+          mono
+          isLast={!summary.overlayVisible}
+        />
+
+        {summary.overlayVisible && (
+          <Pressable
+            onPress={() => onDismissOverlay()}
+            style={[styles.outlineBtn, {marginTop: spacing.sm}]}>
+            <Text style={styles.outlineBtnText}>
+              Dismiss Active Protective Overlay
+            </Text>
+          </Pressable>
+        )}
+      </View>
+
+      {/* Milestone 3 Section 9 & 10.2: Permission Onboarding & Status Card */}
+      <View style={styles.sectionCard}>
+        <View style={styles.cardHeaderInline}>
+          <Text style={styles.sectionTitle}>
+            Permission Onboarding & Status
+          </Text>
+          <StatusBadge
+            label={
+              serviceActive
+                ? 'ALL REQUIRED GRANTED'
+                : permissionGranted
+                ? 'WAITING FOR BIND'
+                : 'SETUP NEEDED'
+            }
+            tone={serviceActive ? 'success' : 'warning'}
+          />
+        </View>
+
+        <View style={styles.onboardingItem}>
+          <View style={styles.onboardingHeader}>
+            <Text style={styles.onboardingTitle}>
+              1. Android Accessibility Service (Required)
+            </Text>
+            <StatusBadge
+              label={
+                serviceActive
+                  ? 'ACTIVE & BOUND'
+                  : permissionGranted
+                  ? 'ENABLED'
+                  : 'NOT GRANTED'
+              }
+              tone={serviceActive ? 'success' : 'warning'}
+              showDot={false}
+            />
+          </View>
+          <Text style={styles.onboardingDesc}>
+            Why it is needed: Allows Screen Guard to detect foreground window
+            changes, capture in-memory window screenshots for local LiteRT
+            classification, and attach a trusted{' '}
+            <Text style={styles.monoInline}>TYPE_ACCESSIBILITY_OVERLAY</Text>{' '}
+            shield over explicit content.
+          </Text>
+          <Pressable
+            onPress={onOpenAccessibilitySettings}
+            style={styles.onboardingActionBtn}>
+            <Text style={styles.onboardingActionText}>
+              {permissionGranted
+                ? 'Manage Accessibility Service in Android Settings'
+                : 'Open Accessibility Settings to Enable Screen Guard'}
+            </Text>
+          </Pressable>
+        </View>
+
+        <View style={[styles.onboardingItem, styles.onboardingItemLast]}>
+          <View style={styles.onboardingHeader}>
+            <Text style={styles.onboardingTitle}>
+              2. Display Over Other Apps (Fallback Overlay)
+            </Text>
+            <StatusBadge
+              label={
+                overlayPermissionGranted
+                  ? 'GRANTED'
+                  : serviceActive
+                  ? 'COVERED BY A11Y'
+                  : 'OPTIONAL'
+              }
+              tone={
+                overlayPermissionGranted || serviceActive
+                  ? 'success'
+                  : 'neutral'
+              }
+              showDot={false}
+            />
+          </View>
+          <Text style={styles.onboardingDesc}>
+            Why it is needed: When Accessibility Service is active, Screen Guard
+            uses native{' '}
+            <Text style={styles.monoInline}>TYPE_ACCESSIBILITY_OVERLAY</Text>{' '}
+            automatically. Granting{' '}
+            <Text style={styles.monoInline}>SYSTEM_ALERT_WINDOW</Text> provides
+            a secondary{' '}
+            <Text style={styles.monoInline}>TYPE_APPLICATION_OVERLAY</Text>{' '}
+            fallback and allows diagnostic overlay testing even before
+            Accessibility is bound.
+          </Text>
+          <Pressable
+            onPress={onOpenOverlaySettings}
+            style={styles.onboardingActionBtn}>
+            <Text style={styles.onboardingActionText}>
+              {overlayPermissionGranted
+                ? 'Manage Display Over Other Apps Permission'
+                : 'Open Display Over Other Apps Settings'}
             </Text>
           </Pressable>
         </View>
@@ -151,7 +434,7 @@ export function DashboardScreen({
         />
         <MetricRow
           label="Model Version"
-          value={status.modelVersion || '1.2.0-litert-fp32'}
+          value={status.modelVersion || '2.1.0-litert-2stage'}
           subValue={`Size: ${(
             (status.modelSizeBytes || 17251928) /
             (1024 * 1024)
@@ -246,7 +529,7 @@ export function DashboardScreen({
         />
       </View>
 
-      {/* Latest Classification Result */}
+      {/* Latest Classification Result (Metadata only — never displays thumbnails of explicit content) */}
       <View style={styles.sectionCard}>
         <View style={styles.cardHeaderInline}>
           <Text style={styles.sectionTitle}>Latest Classification Output</Text>
@@ -287,7 +570,11 @@ export function DashboardScreen({
             <MetricRow
               label="Stage 2 & Low-Light Preprocessing"
               value={`${latest.preprocessingApplied || 'ORIGINAL'}${
-                latest.isLowLightFrame ? ' (Low-Light L=' + (latest.meanLuminance || 0).toFixed(0) + ')' : ''
+                latest.isLowLightFrame
+                  ? ' (Low-Light L=' +
+                    (latest.meanLuminance || 0).toFixed(0) +
+                    ')'
+                  : ''
               }`}
               subValue={
                 latest.stage2Triggered
@@ -349,7 +636,7 @@ export function DashboardScreen({
             </Text>
             <Text style={styles.emptyResultSubtitle}>
               Navigate between apps with Protection enabled, or open the
-              Classifier tab to run on-device LiteRT inference on the 24-sample
+              Classifier tab to run on-device LiteRT inference on the 36-sample
               evaluation suite.
             </Text>
           </View>
@@ -449,7 +736,49 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     color: colors.textSecondary,
     lineHeight: 20,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
+  },
+  sensitivityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 4,
+    marginBottom: spacing.md,
+  },
+  sensitivityLabel: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  sensitivityPills: {
+    flexDirection: 'row',
+    gap: spacing.xs + 2,
+  },
+  sensitivityPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  sensitivityPillActive: {
+    borderColor: colors.accentBorder,
+    backgroundColor: colors.accentSoft,
+  },
+  sensitivityPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  sensitivityPillTextActive: {
+    color: '#60A5FA',
+    fontWeight: '700',
   },
   primaryButton: {
     paddingVertical: 13,
@@ -480,21 +809,22 @@ const styles = StyleSheet.create({
   },
   quickActionRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.xs + 2,
     marginTop: spacing.sm + 2,
   },
   secondaryButton: {
     flex: 1,
     paddingVertical: 9,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.xs + 2,
     borderRadius: radius.sm,
     backgroundColor: colors.surfaceSubtle,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   secondaryButtonText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
     color: colors.textSecondary,
     textAlign: 'center',
@@ -543,10 +873,71 @@ const styles = StyleSheet.create({
     fontFamily: typography.mono,
   },
   counterLabel: {
-    fontSize: 10.5,
+    fontSize: 10,
     color: colors.textMuted,
     marginTop: 2,
     textTransform: 'uppercase',
+    textAlign: 'center',
+  },
+  onboardingItem: {
+    paddingVertical: spacing.sm + 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+  },
+  onboardingItemLast: {
+    borderBottomWidth: 0,
+    paddingBottom: 4,
+  },
+  onboardingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+    gap: spacing.sm,
+  },
+  onboardingTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  onboardingDesc: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17.5,
+    marginBottom: spacing.sm,
+  },
+  monoInline: {
+    fontFamily: typography.mono,
+    color: colors.textPrimary,
+    fontSize: 11.5,
+  },
+  onboardingActionBtn: {
+    backgroundColor: colors.surfaceElevated,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    paddingVertical: 9,
+    paddingHorizontal: spacing.md,
+    alignItems: 'center',
+  },
+  onboardingActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#60A5FA',
+  },
+  outlineBtn: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  outlineBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
   emptyResultBox: {
     paddingVertical: spacing.md,

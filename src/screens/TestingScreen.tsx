@@ -17,6 +17,7 @@ import {
   DebounceTestResult,
   DebugPreviewResponse,
   MonitoringStatus,
+  ProtectionActivitySummary,
 } from '../types/screenguard';
 
 interface TestingScreenProps {
@@ -26,6 +27,13 @@ interface TestingScreenProps {
   debounceTestResult: DebounceTestResult | null;
   isCapturingTest: boolean;
   onOpenAccessibilitySettings: () => void;
+  onOpenOverlaySettings: () => void;
+  onTriggerOverlayTest: (
+    category?: string,
+    delayMs?: number,
+    autoHideDurationMs?: number,
+  ) => Promise<ProtectionActivitySummary | null>;
+  onDismissOverlay: () => Promise<ProtectionActivitySummary | null>;
   onRunManualCapture: (
     delayMs: number,
     holdInMemoryPreview: boolean,
@@ -55,6 +63,9 @@ export function TestingScreen({
   debounceTestResult,
   isCapturingTest,
   onOpenAccessibilitySettings,
+  onOpenOverlaySettings,
+  onTriggerOverlayTest,
+  onDismissOverlay,
   onRunManualCapture,
   onPurgeInMemoryPreview,
   onRunDebounceTest,
@@ -63,6 +74,7 @@ export function TestingScreen({
   onRefresh,
 }: TestingScreenProps) {
   const [countdownSec, setCountdownSec] = useState<number>(0);
+  const [overlayCountdownSec, setOverlayCountdownSec] = useState<number>(0);
 
   // Automatically purge any temporary in-memory preview when leaving the Testing screen
   useEffect(() => {
@@ -70,6 +82,19 @@ export function TestingScreen({
       onPurgeInMemoryPreview().catch(() => {});
     };
   }, [onPurgeInMemoryPreview]);
+
+  const handleDelayedOverlayTest = async (category: string) => {
+    setOverlayCountdownSec(3);
+    const interval = setInterval(() => {
+      setOverlayCountdownSec(prev => (prev > 1 ? prev - 1 : 0));
+    }, 1000);
+    try {
+      await onTriggerOverlayTest(category, 3200, 0);
+    } finally {
+      clearInterval(interval);
+      setOverlayCountdownSec(0);
+    }
+  };
 
   const handleDelayedCapture = async (holdPreview: boolean) => {
     setCountdownSec(3);
@@ -160,13 +185,117 @@ export function TestingScreen({
             onPress={onOpenAccessibilitySettings}
             style={styles.secondaryBtn}>
             <Text style={styles.secondaryBtnText}>
-              Open Accessibility Settings
+              Accessibility Settings
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={onOpenOverlaySettings}
+            style={styles.secondaryBtn}>
+            <Text style={styles.secondaryBtnText}>
+              Overlay Permission
             </Text>
           </Pressable>
           <Pressable onPress={onRefresh} style={styles.secondaryBtn}>
-            <Text style={styles.secondaryBtnText}>Re-Check Permission</Text>
+            <Text style={styles.secondaryBtnText}>Sync Status</Text>
           </Pressable>
         </View>
+      </View>
+
+      {/* Milestone 3 Protective Overlay & Touch-Interception Test Console */}
+      <View style={styles.sectionCard}>
+        <View style={styles.headerRow}>
+          <Text style={styles.sectionTitle}>
+            Protective Overlay & Touch-Interception Verification
+          </Text>
+          <StatusBadge
+            label={`STATE: ${status.protectionSummary?.overlayState || 'HIDDEN'}`}
+            tone={
+              status.protectionSummary?.overlayVisible
+                ? 'danger'
+                : 'success'
+            }
+          />
+        </View>
+
+        <Text style={styles.helperText}>
+          Test the native WindowManager protective overlay (
+          TYPE_ACCESSIBILITY_OVERLAY primary / TYPE_APPLICATION_OVERLAY
+          fallback). Use the 3-second delayed trigger to switch into Chrome,
+          Instagram, TikTok, X, YouTube, or Facebook and verify full-screen
+          coverage, portrait/landscape orientation changes, touch blocking, and
+          "Return to Safe Browsing".
+        </Text>
+
+        <View style={styles.buttonGrid}>
+          <Pressable
+            onPress={() => onTriggerOverlayTest('EXPLICIT', 0, 0)}
+            style={[styles.actionBtn, styles.actionBtnAccent]}>
+            <Text style={styles.actionBtnTitle}>
+              Show Protective Overlay Now (Immediate)
+            </Text>
+            <Text style={styles.actionBtnSub}>
+              Displays full-screen shield immediately · Test "Return to Safe Browsing" or "Dismiss"
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => handleDelayedOverlayTest('EXPLICIT')}
+            style={styles.actionBtn}>
+            <Text style={styles.actionBtnTitle}>
+              {overlayCountdownSec > 0
+                ? `Triggering Overlay in ${overlayCountdownSec}s...`
+                : '3s Delayed Protective Overlay (Switch to Target App)'}
+            </Text>
+            <Text style={styles.actionBtnSub}>
+              Switch to Chrome, Instagram, TikTok, X, YouTube, or Facebook before timer fires
+            </Text>
+          </Pressable>
+
+          {status.protectionSummary?.overlayVisible && (
+            <Pressable
+              onPress={() => onDismissOverlay()}
+              style={styles.actionBtn}>
+              <Text style={styles.actionBtnTitle}>
+                Dismiss Active Protective Overlay
+              </Text>
+              <Text style={styles.actionBtnSub}>
+                Removes overlay and starts per-package dismissal cooldown
+              </Text>
+            </Pressable>
+          )}
+        </View>
+
+        <MetricRow
+          label="Overlay Mechanism"
+          value={
+            status.serviceConnected
+              ? 'TYPE_ACCESSIBILITY_OVERLAY (Trusted Service Surface)'
+              : status.overlayPermissionGranted
+              ? 'TYPE_APPLICATION_OVERLAY (SYSTEM_ALERT_WINDOW)'
+              : 'ENABLE ACCESSIBILITY OR OVERLAY PERMISSION'
+          }
+          valueColor={
+            status.serviceConnected || status.overlayPermissionGranted
+              ? colors.success
+              : colors.warning
+          }
+          mono
+        />
+        <MetricRow
+          label="Protection Events / Apps Protected"
+          value={`${status.protectionSummary?.totalProtectionEvents || 0} events across ${
+            status.protectionSummary?.protectedAppsCount || 0
+          } app(s)`}
+          subValue={`Safe Returns: ${
+            status.protectionSummary?.totalReturnToSafetyClicks || 0
+          } · Dismissals: ${
+            status.protectionSummary?.totalDismissals || 0
+          } · Auto-Recovered: ${
+            status.protectionSummary?.totalAutoRecoveries || 0
+          }`}
+          mono
+          isLast
+        />
       </View>
 
       {/* 2–5. Screenshot Capture, Dimensions, Latency & Explicit In-Memory Debug Preview */}

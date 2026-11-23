@@ -31,12 +31,23 @@ Screenshot Processor & Memory Guard
   └─ Unconditionally closes HardwareBuffer & recycles full-res Bitmap in finally {}
   │
   ▼
-Detection Engine & Temporal Decision Engine (LiteRtNsfwClassifier)
+Detection Engine & Two-Stage LiteRT Classifier (Milestones 2 & 2.1)
   ├─ PerceptualFrameHasher: 64-bit dHash duplicate-frame cache (< 0.15ms, skips static frames)
   ├─ Backpressure Guard: MAX_PENDING_INFERENCE_JOBS = 1 (drops obsolete frames; 0 queue buildup)
-  ├─ LiteRtNsfwClassifier: Google LiteRT + nsfw_mobilenet_v2_140_224.tflite (17.25 MB, 5 classes)
-  ├─ Taxonomy Mapping Layer: EXPLICIT, NUDITY, SUGGESTIVE, NON_EXPLICIT, SAFE, UNCERTAIN
-  └─ TemporalDecisionEngine: EWMA confidence smoothing (alpha=0.60), N-frame confirmation, cooldown & recovery
+  ├─ LowLightPreprocessor: Adaptive luminance/contrast inspection + CLAHE & Gamma enhancement
+  ├─ Stage 1 LiteRtNsfwClassifier: Google LiteRT + nsfw_mobilenet_v2_140_224.tflite (17.25 MB, 5 classes)
+  ├─ Stage 2 OpenNsfwResNetClassifier: Yahoo OpenNSFW ResNet-50 (open_nsfw_resnet50.tflite, 5.96 MB)
+  ├─ Taxonomy Mapping Layer: EXPLICIT, NUDITY, SEXUAL_ACTIVITY, SUGGESTIVE, NON_EXPLICIT, SAFE, UNCERTAIN
+  └─ TemporalDecisionEngine: EWMA confidence smoothing, N-frame confirmation, cooldown & recovery
+  │
+  ▼
+Protection Decision Engine & System-Wide Protective Overlay (Milestone 3)
+  ├─ ProtectionDecisionEngine: Category-specific thresholds, BALANCED vs STRICT sensitivity modes,
+  │  multi-frame confirmation, 2.5s–3.0s minimum display anti-flicker guard, & dismissal cooldowns
+  ├─ ScreenGuardOverlayController: Native WindowManager TYPE_ACCESSIBILITY_OVERLAY shield
+  │  (with TYPE_APPLICATION_OVERLAY fallback), touch-interception backdrop, & orientation handling
+  └─ ProtectionCoordinator: Clears stale overlays on app switch, screen-off (ACTION_SCREEN_OFF),
+     pause, or service unbind; handles "Return to Safe Browsing" and "Dismiss for This Screen"
   │
   ▼
 Result Handler (LocalStorage metadata log + EventBridge real-time emission to React Native)
@@ -90,10 +101,20 @@ ScreenGuard/
         │   │   └── ScreenshotProcessor.kt
         │   ├── classifier/
         │   │   ├── ClassificationResult.kt
+        │   │   ├── ClassifierEvaluator.kt
         │   │   ├── ContentClassifier.kt
         │   │   ├── DetectionEngine.kt
-        │   │   ├── FutureModelClassifierStub.kt
-        │   │   └── MockContentClassifier.kt
+        │   │   ├── LiteRtNsfwClassifier.kt
+        │   │   ├── LowLightPreprocessor.kt
+        │   │   ├── MockContentClassifier.kt
+        │   │   ├── OpenNsfwResNetClassifier.kt
+        │   │   ├── PerceptualFrameHasher.kt
+        │   │   └── TemporalDecisionEngine.kt
+        │   ├── protection/
+        │   │   ├── OverlayController.kt
+        │   │   ├── ProtectionCoordinator.kt
+        │   │   ├── ProtectionDecisionEngine.kt
+        │   │   └── ProtectionModels.kt
         │   └── storage/
         │       └── LocalStorage.kt
         └── res/
@@ -138,7 +159,9 @@ Milestone 2 replaces the mock classifier with a production on-device **Google Li
 - **Output Tensor**: `[1, 5]` `FLOAT32` softmax probabilities (`drawings`, `hentai`, `neutral`, `porn`, `sexy`).
 - **Taxonomy Mapping**: Preserves all 5 raw probabilities in `ClassificationResult.scores` and maps to `EXPLICIT`, `NUDITY`, `SUGGESTIVE`, `NON_EXPLICIT`, `SAFE`, and `UNCERTAIN`.
 - **Temporal Decision Engine ([TemporalDecisionEngine.kt](file:///c:/Users/HomePC/ScreenGuard/android/app/src/main/java/com/paulfruitful/screenguard/classifier/TemporalDecisionEngine.kt))**: Applies EWMA smoothing ($\alpha = 0.60$), requires consecutive confirmations before entering `CONFIRMED_DETECTION`, enforces detection cooldowns, and recovers cleanly after consecutive safe frames.
-- **Full Evaluation & Benchmark Report**: See [MODEL_EVALUATION_REPORT.md](file:///c:/Users/HomePC/ScreenGuard/MODEL_EVALUATION_REPORT.md) for the complete 24-sample validation & held-out test split confusion matrices, Precision (`100.0%`), Recall (`75.0%`), False-Positive Rate (`0.0%`), F1 Score (`0.857`), and CPU vs NNAPI latency benchmarks measured on the physical Android 16 device.
+- **Full Evaluation & Benchmark Reports**:
+  - [MODEL_EVALUATION_REPORT.md](file:///c:/Users/HomePC/ScreenGuard/MODEL_EVALUATION_REPORT.md): Milestones 2 & 2.1 two-stage LiteRT + low-light CLAHE/Gamma evaluation across 36 validation and held-out test samples (`100.0%` Precision, `100.0%` Recall, `0.0%` FPR, `0.0%` Uncertain Rate).
+  - [MILESTONE_3_TEST_REPORT.md](file:///c:/Users/HomePC/ScreenGuard/MILESTONE_3_TEST_REPORT.md): Milestone 3 WindowManager `TYPE_ACCESSIBILITY_OVERLAY` vs `TYPE_APPLICATION_OVERLAY` evaluation, 5-state overlay lifecycle state machine (`HIDDEN`, `PENDING`, `PROTECTED`, `RECOVERING`, `DISMISSED`), `BALANCED` vs `STRICT` policy calibration, and cross-application compatibility report.
 
 ---
 

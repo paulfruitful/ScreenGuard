@@ -51,6 +51,9 @@ export function MainNavigator() {
     lastError,
     refreshAll,
     openAccessibilitySettings,
+    openOverlaySettings,
+    triggerOverlayTest,
+    dismissActiveOverlay,
     toggleProtection,
     updatePreferences,
     clearActivityHistory,
@@ -79,7 +82,7 @@ export function MainNavigator() {
           <View>
             <Text style={styles.brandTitle}>Screen Guard</Text>
             <Text style={styles.brandSubtitle}>
-              On-Device LiteRT NSFW Classification
+              System-Wide Content Filtering & Protective Overlay
             </Text>
           </View>
           <StatusBadge
@@ -115,7 +118,11 @@ export function MainNavigator() {
               status={status}
               preferences={preferences}
               onOpenAccessibilitySettings={openAccessibilitySettings}
+              onOpenOverlaySettings={openOverlaySettings}
               onToggleProtection={toggleProtection}
+              onUpdatePreferences={updatePreferences}
+              onTriggerOverlayTest={triggerOverlayTest}
+              onDismissOverlay={dismissActiveOverlay}
               onNavigateToTesting={() => setActiveTab('TESTING')}
               onNavigateToClassifier={() => setActiveTab('CLASSIFIER')}
               onRefresh={refreshAll}
@@ -151,6 +158,9 @@ export function MainNavigator() {
               debounceTestResult={debounceTestResult}
               isCapturingTest={isCapturingTest}
               onOpenAccessibilitySettings={openAccessibilitySettings}
+              onOpenOverlaySettings={openOverlaySettings}
+              onTriggerOverlayTest={triggerOverlayTest}
+              onDismissOverlay={dismissActiveOverlay}
               onRunManualCapture={runManualCaptureTest}
               onPurgeInMemoryPreview={purgeInMemoryPreview}
               onRunDebounceTest={runDebounceTest}
@@ -166,6 +176,7 @@ export function MainNavigator() {
               onUpdatePreferences={updatePreferences}
               onToggleProtection={toggleProtection}
               onOpenAccessibilitySettings={openAccessibilitySettings}
+              onOpenOverlaySettings={openOverlaySettings}
             />
           )}
         </View>

@@ -1,6 +1,7 @@
 package com.paulfruitful.screenguard.bridge
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import com.facebook.react.bridge.Arguments
@@ -23,6 +24,7 @@ import com.paulfruitful.screenguard.classifier.FullEvaluationReport
 import com.paulfruitful.screenguard.classifier.SingleSampleEvalResult
 import com.paulfruitful.screenguard.classifier.SplitEvaluationMetrics
 import com.paulfruitful.screenguard.classifier.TemporalDecisionEngine
+import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.AppCompatibilityEntry
 import com.paulfruitful.screenguard.storage.LocalStorage
@@ -31,6 +33,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class ScreenGuardModule(
@@ -43,6 +46,7 @@ class ScreenGuardModule(
     init {
         LocalStorage.init(reactContext.applicationContext)
         DetectionEngine.init(reactContext.applicationContext)
+        ProtectionCoordinator.init(reactContext.applicationContext)
         EventBridge.attachReactContext(reactContext)
         moduleScope.launch {
             DetectionEngine.ensureModelLoaded(reactContext.applicationContext)
@@ -93,6 +97,94 @@ class ScreenGuardModule(
     }
 
     @ReactMethod
+    fun canDrawOverlays(promise: Promise) {
+        try {
+            val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                Settings.canDrawOverlays(reactContext.applicationContext)
+            promise.resolve(granted)
+        } catch (e: Exception) {
+            promise.reject("ERR_OVERLAY_CHECK", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun openOverlaySettings(promise: Promise) {
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${reactContext.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            } else {
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${reactContext.packageName}")
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            }
+            try {
+                reactContext.startActivity(intent)
+            } catch (_: Exception) {
+                val fallback = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                reactContext.startActivity(fallback)
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_OPEN_OVERLAY_SETTINGS", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getProtectionSummary(promise: Promise) {
+        try {
+            val summary = ProtectionCoordinator.getActivitySummary(reactContext.applicationContext)
+            promise.resolve(EventBridge.protectionSummaryToWritableMap(summary))
+        } catch (e: Exception) {
+            promise.reject("ERR_GET_PROTECTION_SUMMARY", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun dismissActiveOverlay(promise: Promise) {
+        try {
+            val summary = ProtectionCoordinator.dismissActiveOverlayFromUi(reactContext.applicationContext)
+            promise.resolve(EventBridge.protectionSummaryToWritableMap(summary))
+        } catch (e: Exception) {
+            promise.reject("ERR_DISMISS_OVERLAY", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun triggerOverlayTest(
+        category: String,
+        delayMs: Double,
+        autoHideDurationMs: Double,
+        promise: Promise
+    ) {
+        moduleScope.launch {
+            try {
+                val safeDelay = delayMs.toLong().coerceIn(0L, 15_000L)
+                if (safeDelay > 0L) {
+                    delay(safeDelay)
+                }
+                val summary = ProtectionCoordinator.triggerDiagnosticOverlayTest(
+                    context = reactContext.applicationContext,
+                    testCategory = category.ifBlank { "EXPLICIT" },
+                    autoHideDurationMs = autoHideDurationMs.toLong().coerceIn(0L, 30_000L)
+                )
+                promise.resolve(EventBridge.protectionSummaryToWritableMap(summary))
+            } catch (e: Exception) {
+                promise.reject("ERR_TRIGGER_OVERLAY_TEST", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
     fun getMonitoringStatus(promise: Promise) {
         try {
             promise.resolve(buildMonitoringStatusMap())
@@ -106,6 +198,9 @@ class ScreenGuardModule(
         try {
             val appCtx = reactContext.applicationContext
             val updated = LocalStorage.setProtectionEnabled(appCtx, enabled)
+            if (!enabled) {
+                ProtectionCoordinator.onProtectionPaused(appCtx)
+            }
             val serviceConnected = ScreenGuardAccessibilityService.isServiceConnected()
             val permissionGranted = ScreenGuardAccessibilityService
                 .isAccessibilityServiceEnabledInSettings(appCtx)
@@ -157,6 +252,9 @@ class ScreenGuardModule(
         try {
             val appCtx = reactContext.applicationContext
             val updated = LocalStorage.updatePreferencesFromJson(appCtx, prefsJson)
+            if (!updated.protectionEnabled) {
+                ProtectionCoordinator.onProtectionPaused(appCtx)
+            }
             val serviceConnected = ScreenGuardAccessibilityService.isServiceConnected()
 
             MonitoringNotificationManager.updateStatusNotification(
@@ -462,11 +560,14 @@ class ScreenGuardModule(
         val prefs = LocalStorage.getPreferences(appCtx)
         val permissionGranted = ScreenGuardAccessibilityService
             .isAccessibilityServiceEnabledInSettings(appCtx)
+        val overlayPermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            Settings.canDrawOverlays(appCtx)
         val serviceConnected = ScreenGuardAccessibilityService.isServiceConnected()
         val monitoringActive = permissionGranted && serviceConnected && prefs.protectionEnabled
         val latestClassification = DetectionEngine.getLatestResult()
         val activeClassifier = DetectionEngine.getActiveClassifier()
         val temporalSnap = TemporalDecisionEngine.getSnapshot()
+        val protectionSummary = ProtectionCoordinator.getActivitySummary(appCtx)
 
         val diagMap = Arguments.createMap().apply {
             putInt("hardwareBuffersAllocated", BufferReleaseTracker.getHardwareBuffersAllocated())
@@ -492,9 +593,15 @@ class ScreenGuardModule(
 
         return Arguments.createMap().apply {
             putBoolean("accessibilityPermissionGranted", permissionGranted)
+            putBoolean("overlayPermissionGranted", overlayPermissionGranted)
             putBoolean("serviceConnected", serviceConnected)
             putBoolean("protectionEnabled", prefs.protectionEnabled)
             putBoolean("monitoringActive", monitoringActive)
+            putString("sensitivityMode", prefs.sensitivityMode)
+            putMap(
+                "protectionSummary",
+                EventBridge.protectionSummaryToWritableMap(protectionSummary)
+            )
             putString("currentForegroundPackage", ScreenGuardAccessibilityService.currentForegroundPackage)
             putString("currentForegroundAppLabel", ScreenGuardAccessibilityService.currentForegroundAppLabel)
             putInt("currentWindowId", ScreenGuardAccessibilityService.currentWindowId)
@@ -702,6 +809,10 @@ class ScreenGuardModule(
             putDouble("confidenceThreshold", prefs.confidenceThreshold.toDouble())
             putInt("confirmationFramesRequired", prefs.confirmationFramesRequired)
             putString("interventionBehavior", prefs.interventionBehavior)
+            putString("sensitivityMode", prefs.sensitivityMode)
+            putBoolean("interveneOnSuggestiveInStrict", prefs.interveneOnSuggestiveInStrict)
+            putBoolean("allowManualDismiss", prefs.allowManualDismiss)
+            putInt("dismissCooldownSeconds", prefs.dismissCooldownSeconds)
             putString("mockClassifierProfile", prefs.mockClassifierProfile)
             putBoolean("allowSelfPackageInDiagnostics", prefs.allowSelfPackageInDiagnostics)
         }

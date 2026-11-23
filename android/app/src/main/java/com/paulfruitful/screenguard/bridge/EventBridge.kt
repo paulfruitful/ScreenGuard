@@ -5,6 +5,8 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.paulfruitful.screenguard.classifier.ClassificationResult
+import com.paulfruitful.screenguard.protection.ProtectionActivitySummary
+import com.paulfruitful.screenguard.protection.ProtectionDecision
 import java.lang.ref.WeakReference
 
 /**
@@ -106,6 +108,44 @@ object EventBridge {
             putMap("result", classificationResultToWritableMap(result))
         }
         emitRaw(payload)
+    }
+
+    fun emitProtectionStateChanged(
+        summary: ProtectionActivitySummary,
+        decision: ProtectionDecision? = null
+    ) {
+        val payload = Arguments.createMap().apply {
+            putString("type", "PROTECTION_STATE_CHANGED")
+            putMap("summary", protectionSummaryToWritableMap(summary))
+            if (decision != null) {
+                putString("directive", decision.directive.name)
+                putString("reasonSummary", decision.reasonSummary)
+            }
+            putDouble("timestamp", System.currentTimeMillis().toDouble())
+        }
+        emitRaw(payload)
+    }
+
+    fun protectionSummaryToWritableMap(summary: ProtectionActivitySummary): WritableMap {
+        val pkgArr = Arguments.createArray()
+        summary.protectedPackageNames.forEach { pkgArr.pushString(it) }
+        return Arguments.createMap().apply {
+            putString("overlayState", summary.overlayState)
+            putBoolean("overlayVisible", summary.overlayVisible)
+            putString("activeProtectedPackage", summary.activeProtectedPackage)
+            putString("activeProtectedAppLabel", summary.activeProtectedAppLabel)
+            putString("activeTriggerCategory", summary.activeTriggerCategory)
+            putDouble("activeConfidence", summary.activeConfidence.toDouble())
+            putString("sensitivityMode", summary.sensitivityMode)
+            putInt("totalProtectionEvents", summary.totalProtectionEvents)
+            putInt("protectedAppsCount", summary.protectedAppsCount)
+            putArray("protectedPackageNames", pkgArr)
+            putInt("totalDismissals", summary.totalDismissals)
+            putInt("totalReturnToSafetyClicks", summary.totalReturnToSafetyClicks)
+            putInt("totalAutoRecoveries", summary.totalAutoRecoveries)
+            putDouble("cooldownRemainingMs", summary.cooldownRemainingMs.toDouble())
+            putString("lastOverlayError", summary.lastOverlayError)
+        }
     }
 
     fun classificationResultToWritableMap(result: ClassificationResult): WritableMap {
