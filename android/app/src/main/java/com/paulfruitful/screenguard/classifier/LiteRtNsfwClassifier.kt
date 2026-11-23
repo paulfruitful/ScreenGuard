@@ -28,20 +28,27 @@ data class DelegateBenchmarkResult(
     val error: String? = null
 )
 
+data class RawStage1Scores(
+    val drawings: Float,
+    val hentai: Float,
+    val neutral: Float,
+    val porn: Float,
+    val sexy: Float,
+    val durationMs: Long
+)
+
 /**
- * Production on-device NSFW visual classifier powered by Google LiteRT (TensorFlow Lite)
- * and the pretrained 5-class MobileNetV2 1.40 (224x224) model (`nsfw_mobilenet_v2_140_224.tflite`).
+ * Milestone 2.1 Two-Stage On-Device Visual Content Classifier:
  *
- * Model Specifications:
- * - Source: GantMan/nsfw_model (MIT License), MobileNetV2 (alpha=1.40, 224x224)
- * - Asset file: `nsfw_mobilenet_v2_140_224.tflite` (17,251,928 bytes)
- * - Input Tensor: `[1, 224, 224, 3]` FLOAT32, RGB ordering, normalized to `[0.0, 1.0]` (`pixel / 255.0f`)
- * - Output Tensor: `[1, 5]` FLOAT32 softmax probabilities:
- *     0 -> `drawings` (safe illustrations, cartoons, vector graphics)
- *     1 -> `hentai`   (explicit illustrated / animated pornographic imagery)
- *     2 -> `neutral`  (ordinary safe photographs, UI screens, text, portraits)
- *     3 -> `porn`     (explicit sexual activity, pornography, visible intimate nudity)
- *     4 -> `sexy`     (suggestive/sexualized imagery, swimwear, fitness, underwear ads)
+ * - Stage 1 (Primary): `nsfw_mobilenet_v2_140_224.tflite` (GantMan/nsfw_model MobileNetV2 1.4,
+ *   MIT License, 17.25 MB, 5 classes: `drawings`, `hentai`, `neutral`, `porn`, `sexy`,
+ *   input `[1, 224, 224, 3]` FLOAT32 RGB `[0.0..1.0]`).
+ * - Stage 2 (Selective Verifier): [OpenNsfwResNetClassifier] (`open_nsfw_resnet50.tflite`,
+ *   Yahoo OpenNSFW ResNet-50, BSD-2-Clause License, 5.96 MB, 2 classes: `sfw`, `nsfw`,
+ *   input `[1, 224, 224, 3]` FLOAT32 BGR mean-subtracted `[B-104, G-117, R-123]`).
+ * - Low-Light Preprocessing ([LowLightPreprocessor]): Supports `ORIGINAL`, `GAMMA_CORRECTION`,
+ *   `CLAHE_LOCAL_CONTRAST`, and `BRIGHTNESS_CONTRAST_NORM`. Preserves the original unenhanced
+ *   prediction and requires corroboration so enhancement noise never manufactures false positives.
  */
 class LiteRtNsfwClassifier(
     private val appContext: Context,
@@ -59,11 +66,13 @@ class LiteRtNsfwClassifier(
         val RAW_LABELS = arrayOf("drawings", "hentai", "neutral", "porn", "sexy")
     }
 
-    override val modelId: String = "nsfw-mobilenet-v2-140-224"
-    override val modelVersion: String = "1.2.0-litert-fp32 (GantMan/nsfw_model MobileNetV2 1.4)"
+    override val modelId: String = "nsfw-mobilenetv2-140+open-nsfw-resnet50"
+    override val modelVersion: String =
+        "2.1.0-cascade (MobileNetV2 1.4 MIT + OpenNSFW ResNet-50 BSD-2)"
     override val isMockModel: Boolean = false
 
     private val inferenceMutex = Mutex()
+    val secondStageClassifier = OpenNsfwResNetClassifier(appContext, numThreads)
 
     @Volatile
     private var interpreter: Interpreter? = null
@@ -78,44 +87,46 @@ class LiteRtNsfwClassifier(
     @Volatile
     private var activeDelegateName: String = if (useNnapi) "NNAPI" else "CPU_XNNPACK_${numThreads}T"
     @Volatile
-    private var inputSpecString: String = "[1, 224, 224, 3] FLOAT32 RGB [0.0..1.0]"
+    private var inputSpecString: String =
+        "S1:[1,224,224,3] RGB [0..1] + S2:[1,224,224,3] BGR MeanSub"
     @Volatile
-    private var outputSpecString: String = "[1, 5] FLOAT32 Softmax (drawings, hentai, neutral, porn, sexy)"
+    private var outputSpecString: String =
+        "S1:[1,5] (drawings,hentai,neutral,porn,sexy) + S2:[1,2] (sfw,nsfw)"
     @Volatile
     private var lastInitError: String? = null
 
-    // Pre-allocated direct ByteBuffer (602,112 bytes) and pixel buffer to avoid per-frame GC churn
     private val inputTensorBuffer: ByteBuffer = ByteBuffer
         .allocateDirect(4 * INPUT_WIDTH * INPUT_HEIGHT * INPUT_CHANNELS)
         .order(ByteOrder.nativeOrder())
     private val pixelScratch = IntArray(INPUT_WIDTH * INPUT_HEIGHT)
     private val outputProbabilities = Array(1) { FloatArray(OUTPUT_CLASSES) }
 
-    override fun isModelLoaded(): Boolean = modelLoaded
+    override fun isModelLoaded(): Boolean = modelLoaded && secondStageClassifier.isModelLoaded()
 
-    override fun getInitializationDurationMs(): Long = initDurationMs
+    override fun getInitializationDurationMs(): Long =
+        initDurationMs + secondStageClassifier.getInitDurationMs()
 
     override fun getActiveDelegateName(): String = activeDelegateName
 
-    override fun getModelSizeBytes(): Long = modelSizeBytes
+    override fun getModelSizeBytes(): Long =
+        modelSizeBytes + secondStageClassifier.getModelSizeBytes()
 
     override fun getInputTensorSpec(): String = inputSpecString
 
     override fun getOutputTensorSpec(): String = outputSpecString
 
-    /**
-     * Thread-safe one-time model initialization from APK assets.
-     */
     suspend fun ensureInitialized(): Boolean = withContext(Dispatchers.Default) {
+        val s2Ready = secondStageClassifier.ensureInitialized()
         if (modelLoaded && interpreter != null) {
-            return@withContext true
+            return@withContext s2Ready
         }
-        inferenceMutex.withLock {
+        val s1Ready = inferenceMutex.withLock {
             if (modelLoaded && interpreter != null) {
                 return@withLock true
             }
-            return@withLock initializeLocked()
+            initializeLocked()
         }
+        return@withContext s1Ready && s2Ready
     }
 
     private fun initializeLocked(): Boolean {
@@ -137,8 +148,10 @@ class LiteRtNsfwClassifier(
 
             val inTensor = interp.getInputTensor(0)
             val outTensor = interp.getOutputTensor(0)
-            inputSpecString = "${inTensor.shape().contentToString()} ${inTensor.dataType()} RGB [0.0..1.0]"
-            outputSpecString = "${outTensor.shape().contentToString()} ${outTensor.dataType()} (${RAW_LABELS.joinToString(", ")})"
+            inputSpecString =
+                "S1:${inTensor.shape().contentToString()} RGB [0..1] | S2:[1,224,224,3] BGR [-104,-117,-123]"
+            outputSpecString =
+                "S1:${outTensor.shape().contentToString()} (${RAW_LABELS.joinToString(",")}) | S2:[1,2] (sfw,nsfw)"
 
             interpreter = interp
             initDurationMs = max(1L, (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000L)
@@ -157,8 +170,7 @@ class LiteRtNsfwClassifier(
         appContext.assets.openFd(ASSET_MODEL_FILENAME).use { afd ->
             modelSizeBytes = afd.declaredLength
             FileInputStream(afd.fileDescriptor).use { fis ->
-                val channel = fis.channel
-                return channel.map(
+                return fis.channel.map(
                     FileChannel.MapMode.READ_ONLY,
                     afd.startOffset,
                     afd.declaredLength
@@ -167,171 +179,352 @@ class LiteRtNsfwClassifier(
         }
     }
 
-    override suspend fun classify(bitmap: Bitmap): ClassificationResult = withContext(Dispatchers.Default) {
-        val totalStartNs = SystemClock.elapsedRealtimeNanos()
+    private fun runStage1Locked(targetBmp: Bitmap): RawStage1Scores {
+        val t0 = SystemClock.elapsedRealtimeNanos()
+        val activeInterpreter = interpreter
+            ?: throw IllegalStateException("Stage 1 LiteRT interpreter not initialized")
 
-        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
-            return@withContext failureResult("Input Bitmap is empty or already recycled", 0L)
+        inputTensorBuffer.rewind()
+        targetBmp.getPixels(
+            pixelScratch,
+            0,
+            INPUT_WIDTH,
+            0,
+            0,
+            INPUT_WIDTH,
+            INPUT_HEIGHT
+        )
+
+        for (i in 0 until (INPUT_WIDTH * INPUT_HEIGHT)) {
+            val argb = pixelScratch[i]
+            val r = ((argb shr 16) and 0xFF) / 255.0f
+            val g = ((argb shr 8) and 0xFF) / 255.0f
+            val b = (argb and 0xFF) / 255.0f
+            inputTensorBuffer.putFloat(r)
+            inputTensorBuffer.putFloat(g)
+            inputTensorBuffer.putFloat(b)
+        }
+        inputTensorBuffer.rewind()
+
+        for (c in 0 until OUTPUT_CLASSES) {
+            outputProbabilities[0][c] = 0f
         }
 
-        inferenceMutex.withLock {
-            if (!modelLoaded || interpreter == null) {
-                if (!initializeLocked()) {
-                    return@withLock failureResult(
-                        lastInitError ?: "Failed to initialize LiteRT model",
-                        max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
-                    )
-                }
+        activeInterpreter.run(inputTensorBuffer, outputProbabilities)
+        val dur = max(1L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
+
+        return RawStage1Scores(
+            drawings = outputProbabilities[0][0].coerceIn(0f, 1f),
+            hentai = outputProbabilities[0][1].coerceIn(0f, 1f),
+            neutral = outputProbabilities[0][2].coerceIn(0f, 1f),
+            porn = outputProbabilities[0][3].coerceIn(0f, 1f),
+            sexy = outputProbabilities[0][4].coerceIn(0f, 1f),
+            durationMs = dur
+        )
+    }
+
+    /**
+     * Executes the exact Milestone 2 single-stage baseline (unenhanced original frame, Stage 1 only)
+     * for side-by-side Before vs After benchmarking.
+     */
+    suspend fun classifyBaselineSingleStage(bitmap: Bitmap): ClassificationResult =
+        withContext(Dispatchers.Default) {
+            val totalStartNs = SystemClock.elapsedRealtimeNanos()
+            if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+                return@withContext failureResult("Recycled bitmap", 0L)
             }
-
-            val activeInterpreter = interpreter
-                ?: return@withLock failureResult("LiteRT Interpreter is null", 1L)
-
+            val prefs = LocalStorage.getPreferences(appContext)
             var resizedTemp: Bitmap? = null
             try {
                 val targetBmp = if (bitmap.width == INPUT_WIDTH && bitmap.height == INPUT_HEIGHT) {
                     bitmap
                 } else {
                     Bitmap.createScaledBitmap(bitmap, INPUT_WIDTH, INPUT_HEIGHT, true).also {
-                        if (it !== bitmap) {
-                            resizedTemp = it
+                        if (it !== bitmap) resizedTemp = it
+                    }
+                }
+                val illum = LowLightPreprocessor.analyzeIllumination(targetBmp)
+                val s1 = inferenceMutex.withLock {
+                    if (!modelLoaded || interpreter == null) {
+                        if (!initializeLocked()) {
+                            return@withLock null
                         }
                     }
-                }
+                    runStage1Locked(targetBmp)
+                } ?: return@withContext failureResult("Stage 1 init failed", 1L)
 
-                // Populate normalized [1, 224, 224, 3] RGB FLOAT32 tensor in [0.0f..1.0f]
-                inputTensorBuffer.rewind()
-                targetBmp.getPixels(
-                    pixelScratch,
-                    0,
-                    INPUT_WIDTH,
-                    0,
-                    0,
-                    INPUT_WIDTH,
-                    INPUT_HEIGHT
-                )
-
-                for (i in 0 until (INPUT_WIDTH * INPUT_HEIGHT)) {
-                    val argb = pixelScratch[i]
-                    val r = ((argb shr 16) and 0xFF) / 255.0f
-                    val g = ((argb shr 8) and 0xFF) / 255.0f
-                    val b = (argb and 0xFF) / 255.0f
-                    inputTensorBuffer.putFloat(r)
-                    inputTensorBuffer.putFloat(g)
-                    inputTensorBuffer.putFloat(b)
-                }
-                inputTensorBuffer.rewind()
-
-                // Reset output buffer
-                for (c in 0 until OUTPUT_CLASSES) {
-                    outputProbabilities[0][c] = 0f
-                }
-
-                // Execute real on-device LiteRT inference
-                activeInterpreter.run(inputTensorBuffer, outputProbabilities)
-
-                val pDrawings = outputProbabilities[0][0].coerceIn(0f, 1f)
-                val pHentai = outputProbabilities[0][1].coerceIn(0f, 1f)
-                val pNeutral = outputProbabilities[0][2].coerceIn(0f, 1f)
-                val pPorn = outputProbabilities[0][3].coerceIn(0f, 1f)
-                val pSexy = outputProbabilities[0][4].coerceIn(0f, 1f)
-
-                val durationMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
-                val prefs = LocalStorage.getPreferences(appContext)
-
-                return@withLock interpretModelOutput(
-                    pDrawings = pDrawings,
-                    pHentai = pHentai,
-                    pNeutral = pNeutral,
-                    pPorn = pPorn,
-                    pSexy = pSexy,
-                    durationMs = durationMs,
+                val totalMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+                return@withContext interpretBaselineSingleStage(
+                    s1 = s1,
+                    durationMs = totalMs,
                     explicitThreshold = prefs.confidenceThreshold,
-                    frameWidth = targetBmp.width,
-                    frameHeight = targetBmp.height
-                )
-            } catch (e: Exception) {
-                val durationMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
-                return@withLock failureResult(
-                    "LiteRT inference exception: ${e.javaClass.simpleName}: ${e.message}",
-                    durationMs
+                    illum = illum
                 )
             } finally {
-                resizedTemp?.let { tmp ->
-                    if (!tmp.isRecycled) {
-                        tmp.recycle()
-                    }
+                resizedTemp?.let { if (!it.isRecycled) it.recycle() }
+            }
+        }
+
+    /**
+     * Benchmarks a specific [PreprocessingMode] independently on Stage 1 + Stage 2.
+     */
+    suspend fun classifyWithFixedPreprocessing(
+        bitmap: Bitmap,
+        mode: PreprocessingMode,
+        enableStage2: Boolean = true
+    ): ClassificationResult = withContext(Dispatchers.Default) {
+        val totalStartNs = SystemClock.elapsedRealtimeNanos()
+        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+            return@withContext failureResult("Recycled bitmap", 0L)
+        }
+        val prefs = LocalStorage.getPreferences(appContext)
+        var resizedTemp: Bitmap? = null
+        var enhancedTemp: Bitmap? = null
+        try {
+            val targetBmp = if (bitmap.width == INPUT_WIDTH && bitmap.height == INPUT_HEIGHT) {
+                bitmap
+            } else {
+                Bitmap.createScaledBitmap(bitmap, INPUT_WIDTH, INPUT_HEIGHT, true).also {
+                    if (it !== bitmap) resizedTemp = it
                 }
             }
+            val illum = LowLightPreprocessor.analyzeIllumination(targetBmp)
+            val evalBmp = if (mode == PreprocessingMode.ORIGINAL) {
+                targetBmp
+            } else {
+                LowLightPreprocessor.applyEnhancement(targetBmp, mode, illum).also {
+                    enhancedTemp = it
+                }
+            }
+
+            val s1 = inferenceMutex.withLock {
+                if (!modelLoaded || interpreter == null) {
+                    if (!initializeLocked()) return@withLock null
+                }
+                runStage1Locked(evalBmp)
+            } ?: return@withContext failureResult("Stage 1 init failed", 1L)
+
+            val s2 = if (enableStage2) {
+                secondStageClassifier.classify(evalBmp)
+            } else {
+                null
+            }
+
+            val totalMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+            return@withContext resolveTwoStageTaxonomy(
+                origS1 = s1,
+                effectiveS1 = s1,
+                s2 = s2,
+                illum = illum,
+                preprocessingMode = mode,
+                baselineCategory = ContentCategory.NON_EXPLICIT.name,
+                baselineConfidence = s1.neutral + s1.drawings,
+                durationMs = totalMs,
+                explicitThreshold = prefs.confidenceThreshold
+            )
+        } finally {
+            enhancedTemp?.let { if (!it.isRecycled) it.recycle() }
+            resizedTemp?.let { if (!it.isRecycled) it.recycle() }
         }
     }
 
     /**
-     * Scientifically justified taxonomy mapping layer:
-     * Preserves all 5 original MobileNetV2 class probabilities (`drawings`, `hentai`, `neutral`, `porn`, `sexy`)
-     * and maps them into the Screen Guard taxonomy:
-     * - EXPLICIT: High-confidence `porn` or `hentai` (>= explicitThreshold, or combined >= 0.78).
-     * - NUDITY: Moderate-to-high `porn` (>= nudityThreshold) or combined intimate exposure (`porn + 0.45*sexy >= 0.52` with `porn >= 0.25`).
-     * - SUGGESTIVE: Elevated `sexy` (>= 0.52) without crossing the `NUDITY` / `EXPLICIT` threshold.
-     * - NON_EXPLICIT: Moderate `sexy` (`0.18..0.52`) accompanied by `neutral`/`drawings` context (typical of swimming, gym/fitness, beach, sports, portraits).
-     * - UNCERTAIN: Ambiguous probability distribution where no category reaches 0.42 or borderline explicit/safe split.
-     * - SAFE: Dominant `neutral` + `drawings` (>= 0.55) with low `porn` + `hentai` (< 0.22).
+     * Production Milestone 2.1 inference pipeline:
+     * 1. Runs Stage 1 on the original 224x224 frame and records the baseline prediction.
+     * 2. Analyzes frame illumination (`meanLuminance`, `darkPixelRatio`, `isLowLight`).
+     * 3. If the frame is low-light and not overwhelmingly safe, applies CLAHE local contrast
+     *    and Gamma correction to recover shadow-compressed features while guarding against noise.
+     * 4. Selectively invokes Stage 2 (`open_nsfw_resnet50.tflite`) when Stage 1 is uncertain,
+     *    borderline suspicious, or shows partially clothed (`porn + sexy`) or low-light evidence.
      */
-    fun interpretModelOutput(
-        pDrawings: Float,
-        pHentai: Float,
-        pNeutral: Float,
-        pPorn: Float,
-        pSexy: Float,
+    override suspend fun classify(bitmap: Bitmap): ClassificationResult =
+        withContext(Dispatchers.Default) {
+            val totalStartNs = SystemClock.elapsedRealtimeNanos()
+            if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+                return@withContext failureResult("Input Bitmap is empty or already recycled", 0L)
+            }
+
+            val prefs = LocalStorage.getPreferences(appContext)
+            var resizedTemp: Bitmap? = null
+            var claheBmp: Bitmap? = null
+            var gammaBmp: Bitmap? = null
+
+            try {
+                val targetBmp = if (bitmap.width == INPUT_WIDTH && bitmap.height == INPUT_HEIGHT) {
+                    bitmap
+                } else {
+                    Bitmap.createScaledBitmap(bitmap, INPUT_WIDTH, INPUT_HEIGHT, true).also {
+                        if (it !== bitmap) resizedTemp = it
+                    }
+                }
+
+                val illum = LowLightPreprocessor.analyzeIllumination(targetBmp)
+
+                // 1. Always evaluate the unenhanced original frame first and preserve its baseline result
+                val origS1 = inferenceMutex.withLock {
+                    if (!modelLoaded || interpreter == null) {
+                        if (!initializeLocked()) return@withLock null
+                    }
+                    runStage1Locked(targetBmp)
+                } ?: return@withContext failureResult(
+                    lastInitError ?: "Failed to initialize LiteRT model",
+                    max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+                )
+
+                val baselineResult = interpretBaselineSingleStage(
+                    s1 = origS1,
+                    durationMs = origS1.durationMs,
+                    explicitThreshold = prefs.confidenceThreshold,
+                    illum = illum
+                )
+
+                var effectiveS1 = origS1
+                var appliedMode = PreprocessingMode.ORIGINAL
+
+                // 2. Low-light enhancement path: only evaluate enhanced frames when the scene is
+                // genuinely low-light (`illum.isLowLight`) and not a clean vector drawing.
+                if (illum.isLowLight && origS1.drawings < 0.80f) {
+                    claheBmp = LowLightPreprocessor.applyClaheLocalContrast(targetBmp)
+                    gammaBmp = LowLightPreprocessor.applyGammaCorrection(targetBmp, illum)
+
+                    val claheS1 = inferenceMutex.withLock { runStage1Locked(claheBmp!!) }
+                    val gammaS1 = inferenceMutex.withLock { runStage1Locked(gammaBmp!!) }
+
+                    val bestEnhanced = if ((claheS1.porn + 0.6f * claheS1.sexy) >=
+                        (gammaS1.porn + 0.6f * gammaS1.sexy)
+                    ) {
+                        claheS1 to PreprocessingMode.CLAHE_LOCAL_CONTRAST
+                    } else {
+                        gammaS1 to PreprocessingMode.GAMMA_CORRECTION
+                    }
+
+                    // Noise-artifact guard: Only adopt enhanced Stage 1 scores if the original
+                    // unenhanced frame had baseline non-zero sexual signal OR the enhanced frame
+                    // shows strong structural confidence (> 0.25 porn+sexy) confirmed by Stage 2.
+                    val origSignal = origS1.porn + origS1.sexy + origS1.hentai
+                    val enhSignal = bestEnhanced.first.porn + bestEnhanced.first.sexy
+                    if (origSignal >= 0.015f && enhSignal > (origSignal + 0.04f)) {
+                        effectiveS1 = bestEnhanced.first
+                        appliedMode = bestEnhanced.second
+                    }
+                }
+
+                // 3. Selective Second-Stage Verification (OpenNSFW ResNet-50)
+                // Triggered when:
+                // - Baseline Stage 1 was UNCERTAIN
+                // - Stage 1 has intermediate porn/hentai (`0.04..0.52`) or suggestive/partial clothing (`sexy >= 0.16`)
+                // - Frame is low-light (`illum.isLowLight`) and not a pure UI/drawing screen
+                val shouldRunStage2 =
+                    baselineResult.predictedCategory == ContentCategory.UNCERTAIN.name ||
+                        (effectiveS1.porn in 0.04f..0.55f) ||
+                        (effectiveS1.sexy >= 0.16f) ||
+                        (illum.isLowLight && origS1.drawings < 0.70f)
+
+                var stage2Res: SecondStageResult? = null
+                if (shouldRunStage2) {
+                    val s2Orig = secondStageClassifier.classify(targetBmp)
+                    stage2Res = s2Orig
+
+                    // If low-light enhancement was applied, also evaluate Stage 2 on the enhanced frame
+                    // and require both original and enhanced views to prevent noise-induced false positives.
+                    val enhTarget = when (appliedMode) {
+                        PreprocessingMode.CLAHE_LOCAL_CONTRAST -> claheBmp
+                        PreprocessingMode.GAMMA_CORRECTION -> gammaBmp
+                        else -> gammaBmp ?: claheBmp
+                    }
+                    if (illum.isLowLight && enhTarget != null) {
+                        val s2Enh = secondStageClassifier.classify(enhTarget)
+                        // Conservative blend: weight original 45% + enhanced 55% only if original s2Orig.nsfw >= 0.08
+                        // or origS1 had porn+sexy >= 0.05
+                        if (s2Orig.nsfwScore >= 0.08f || (origS1.porn + origS1.sexy) >= 0.05f) {
+                            val blendedNsfw = maxOf(
+                                s2Orig.nsfwScore,
+                                0.45f * s2Orig.nsfwScore + 0.55f * s2Enh.nsfwScore
+                            ).coerceIn(0f, 1f)
+                            stage2Res = s2Orig.copy(
+                                nsfwScore = blendedNsfw,
+                                sfwScore = (1f - blendedNsfw).coerceIn(0f, 1f),
+                                durationMs = s2Orig.durationMs + s2Enh.durationMs
+                            )
+                            if (appliedMode == PreprocessingMode.ORIGINAL && s2Enh.nsfwScore > s2Orig.nsfwScore + 0.10f) {
+                                appliedMode = PreprocessingMode.CLAHE_LOCAL_CONTRAST
+                            }
+                        }
+                    }
+                }
+
+                val totalMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+                return@withContext resolveTwoStageTaxonomy(
+                    origS1 = origS1,
+                    effectiveS1 = effectiveS1,
+                    s2 = stage2Res,
+                    illum = illum,
+                    preprocessingMode = appliedMode,
+                    baselineCategory = baselineResult.predictedCategory,
+                    baselineConfidence = baselineResult.confidence,
+                    durationMs = totalMs,
+                    explicitThreshold = prefs.confidenceThreshold
+                )
+            } catch (e: Exception) {
+                val durationMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+                return@withContext failureResult(
+                    "LiteRT inference exception: ${e.javaClass.simpleName}: ${e.message}",
+                    durationMs
+                )
+            } finally {
+                claheBmp?.let { if (!it.isRecycled) it.recycle() }
+                gammaBmp?.let { if (!it.isRecycled) it.recycle() }
+                resizedTemp?.let { if (!it.isRecycled) it.recycle() }
+            }
+        }
+
+    private fun interpretBaselineSingleStage(
+        s1: RawStage1Scores,
         durationMs: Long,
         explicitThreshold: Float,
-        frameWidth: Int = INPUT_WIDTH,
-        frameHeight: Int = INPUT_HEIGHT
+        illum: IlluminationMetrics
     ): ClassificationResult {
-        val combinedExplicit = (pPorn + pHentai).coerceIn(0f, 1f)
-        val combinedSafe = (pNeutral + pDrawings).coerceIn(0f, 1f)
-        // Derived nudity score weights `porn` primary and `sexy`/`hentai` secondary
-        val derivedNudityScore = (pPorn + 0.45f * pSexy + 0.65f * pHentai).coerceIn(0f, 1f)
-
+        val combinedExplicit = (s1.porn + s1.hentai).coerceIn(0f, 1f)
+        val combinedSafe = (s1.neutral + s1.drawings).coerceIn(0f, 1f)
+        val derivedNudityScore = (s1.porn + 0.45f * s1.sexy + 0.65f * s1.hentai).coerceIn(0f, 1f)
         val nudityThreshold = (explicitThreshold * 0.62f).coerceIn(0.35f, 0.65f)
         val suggestiveThreshold = 0.52f
 
         val (category, categoryConfidence) = when {
-            pPorn >= explicitThreshold || pHentai >= explicitThreshold || combinedExplicit >= maxOf(0.75f, explicitThreshold) -> {
-                ContentCategory.EXPLICIT to maxOf(pPorn, pHentai, combinedExplicit)
+            s1.porn >= explicitThreshold || s1.hentai >= explicitThreshold || combinedExplicit >= maxOf(0.75f, explicitThreshold) -> {
+                ContentCategory.EXPLICIT to maxOf(s1.porn, s1.hentai, combinedExplicit)
             }
-            pPorn >= nudityThreshold || (derivedNudityScore >= 0.52f && pPorn >= 0.22f) || (pHentai >= nudityThreshold) -> {
-                ContentCategory.NUDITY to maxOf(pPorn, derivedNudityScore)
+            s1.porn >= nudityThreshold || (derivedNudityScore >= 0.52f && s1.porn >= 0.22f) || (s1.hentai >= nudityThreshold) -> {
+                ContentCategory.NUDITY to maxOf(s1.porn, derivedNudityScore)
             }
-            pSexy >= suggestiveThreshold -> {
-                ContentCategory.SUGGESTIVE to pSexy
+            s1.sexy >= suggestiveThreshold -> {
+                ContentCategory.SUGGESTIVE to s1.sexy
             }
-            pSexy >= 0.18f && combinedSafe >= 0.35f -> {
-                ContentCategory.NON_EXPLICIT to (pSexy + combinedSafe).coerceIn(0f, 1f)
+            s1.sexy >= 0.18f && combinedSafe >= 0.35f -> {
+                ContentCategory.NON_EXPLICIT to (s1.sexy + combinedSafe).coerceIn(0f, 1f)
             }
             (combinedSafe >= 0.52f && combinedExplicit < 0.25f) ||
-                (combinedSafe >= 0.60f && pPorn < 0.05f && pHentai < 0.45f) -> {
-                ContentCategory.SAFE to combinedSafe
+                (combinedSafe >= 0.60f && s1.porn < 0.05f && s1.hentai < 0.45f) -> {
+                ContentCategory.NON_EXPLICIT to combinedSafe
             }
             else -> {
-                val topProb = maxOf(pDrawings, pHentai, pNeutral, pPorn, pSexy)
+                val topProb = maxOf(s1.drawings, s1.hentai, s1.neutral, s1.porn, s1.sexy)
                 ContentCategory.UNCERTAIN to topProb
             }
         }
 
-        val isExplicitOrNudity =
-            category == ContentCategory.EXPLICIT || category == ContentCategory.NUDITY
-
+        val isPos = category == ContentCategory.EXPLICIT || category == ContentCategory.NUDITY
         val scoresMap = linkedMapOf(
-            "drawings" to pDrawings,
-            "hentai" to pHentai,
-            "neutral" to pNeutral,
-            "porn" to pPorn,
-            "sexy" to pSexy,
+            "drawings" to s1.drawings,
+            "hentai" to s1.hentai,
+            "neutral" to s1.neutral,
+            "porn" to s1.porn,
+            "sexy" to s1.sexy,
             "EXPLICIT" to combinedExplicit,
             "NUDITY" to derivedNudityScore,
-            "SUGGESTIVE" to pSexy,
-            "SAFE" to combinedSafe
+            "SEXUAL_ACTIVITY" to 0f,
+            "SUGGESTIVE" to s1.sexy,
+            "NON_EXPLICIT" to combinedSafe
         )
 
         return ClassificationResult(
@@ -339,12 +532,187 @@ class LiteRtNsfwClassifier(
             predictedCategory = category.name,
             confidence = categoryConfidence,
             processingDurationMs = durationMs,
+            modelVersion = "1.2.0-baseline-single-stage",
+            successful = true,
+            isExplicit = isPos,
+            nudityScore = derivedNudityScore,
+            explicitScore = combinedExplicit,
+            sexualActivityScore = 0f,
+            suggestiveScore = s1.sexy,
+            safeScore = combinedSafe,
+            drawingsScore = s1.drawings,
+            hentaiScore = s1.hentai,
+            neutralScore = s1.neutral,
+            pornScore = s1.porn,
+            sexyScore = s1.sexy,
+            stage2Triggered = false,
+            preprocessingApplied = PreprocessingMode.ORIGINAL.name,
+            isLowLightFrame = illum.isLowLight,
+            meanLuminance = illum.meanLuminance,
+            originalCategory = category.name,
+            originalConfidence = categoryConfidence,
+            delegateUsed = activeDelegateName,
+            thresholdUsed = explicitThreshold,
+            modelId = "nsfw-mobilenet-v2-140-224"
+        )
+    }
+
+    /**
+     * Defensible two-stage taxonomy resolution combining Stage 1 (5-class MobileNetV2 1.4)
+     * and Stage 2 (Yahoo OpenNSFW ResNet-50) with low-light false-positive protection.
+     */
+    private fun resolveTwoStageTaxonomy(
+        origS1: RawStage1Scores,
+        effectiveS1: RawStage1Scores,
+        s2: SecondStageResult?,
+        illum: IlluminationMetrics,
+        preprocessingMode: PreprocessingMode,
+        baselineCategory: String,
+        baselineConfidence: Float,
+        durationMs: Long,
+        explicitThreshold: Float
+    ): ClassificationResult {
+        val pDrawings = effectiveS1.drawings
+        val pHentai = effectiveS1.hentai
+        val pNeutral = effectiveS1.neutral
+        val pPorn = maxOf(origS1.porn, effectiveS1.porn)
+        val pSexy = maxOf(origS1.sexy, effectiveS1.sexy)
+
+        val s2Triggered = s2 != null && s2.successful
+        val s2Nsfw = if (s2Triggered) s2!!.nsfwScore else 0f
+        val s2Sfw = if (s2Triggered) s2!!.sfwScore else 1f
+
+        val combinedSafe = (pNeutral + pDrawings).coerceIn(0f, 1f)
+        val s1Explicit = (pPorn + pHentai).coerceIn(0f, 1f)
+
+        // Breastfeeding / infant maternal care false-positive guard:
+        // When Stage 1 has moderate `porn` (0.15..0.32) with near-zero `sexy` (< 0.03) and high `neutral` (> 0.68),
+        // AND Stage 2 ResNet-50 `nsfw` is below 0.55, keep as NON_EXPLICIT rather than NUDITY.
+        val isLikelyNonSexualSkinExposure =
+            !illum.isLowLight &&
+                pNeutral >= 0.70f &&
+                pSexy < 0.025f &&
+                pPorn < 0.30f &&
+                (!s2Triggered || s2Nsfw < 0.52f)
+
+        // Ordinary dark scene false-positive guard:
+        // If the original unenhanced frame had near-zero porn (< 0.025) and near-zero sexy (< 0.04)
+        // and Stage 2 nsfw < 0.38, never classify as sexual even if low-light enhancement lifted background contrast.
+        val isOrdinaryDarkScene =
+            illum.isLowLight &&
+                origS1.porn < 0.025f &&
+                origS1.sexy < 0.045f &&
+                (!s2Triggered || s2Nsfw < 0.38f)
+
+        val nudityThreshold = (explicitThreshold * 0.58f).coerceIn(0.35f, 0.60f)
+
+        // Joint sexual activity score capturing partially clothed sexual activity and sexualized poses
+        // where Stage 1 detects `porn + sexy` (or low-light compressed `porn`) and Stage 2 ResNet-50 corroborates `nsfw`.
+        val sexualActivityScore = if (s2Triggered) {
+            (0.45f * (pPorn + 0.75f * pSexy) + 0.55f * s2Nsfw).coerceIn(0f, 1f)
+        } else {
+            (0.70f * pPorn + 0.45f * pSexy).coerceIn(0f, 1f)
+        }
+
+        val derivedNudityScore = if (s2Triggered) {
+            maxOf(
+                pPorn,
+                (0.60f * pPorn + 0.40f * s2Nsfw + 0.25f * pSexy).coerceIn(0f, 1f)
+            )
+        } else {
+            (pPorn + 0.40f * pSexy + 0.55f * pHentai).coerceIn(0f, 1f)
+        }
+
+        val derivedExplicitScore = if (s2Triggered) {
+            maxOf(s1Explicit, (0.65f * pPorn + 0.35f * s2Nsfw).coerceIn(0f, 1f))
+        } else {
+            s1Explicit
+        }
+
+        val (category, categoryConfidence) = when {
+            isOrdinaryDarkScene || isLikelyNonSexualSkinExposure -> {
+                ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
+            }
+
+            // 1. EXPLICIT: High-confidence explicit sexual imagery
+            pPorn >= explicitThreshold ||
+                (pHentai >= explicitThreshold && pDrawings < 0.30f) ||
+                (s2Triggered && pPorn >= 0.50f && s2Nsfw >= 0.68f) -> {
+                ContentCategory.EXPLICIT to maxOf(pPorn, derivedExplicitScore)
+            }
+
+            // 2. SEXUAL_ACTIVITY: Sexual activity without complete nudity, partially clothed sexual content
+            // (where both `porn` and `sexy` are substantially elevated), or low-light sexual scenes
+            // corroborated by Stage 2 OpenNSFW ResNet-50
+            (pPorn in 0.22f..0.68f && pSexy >= 0.14f && (pPorn + pSexy) >= 0.48f) ||
+                (s2Triggered && (pPorn + pSexy) >= 0.24f && pPorn >= 0.03f && s2Nsfw >= 0.42f) ||
+                (s2Triggered && pSexy >= 0.48f && s2Nsfw >= 0.48f) ||
+                (s2Triggered && illum.isLowLight && (pPorn + pSexy) >= 0.08f && s2Nsfw >= 0.45f) -> {
+                ContentCategory.SEXUAL_ACTIVITY to maxOf(sexualActivityScore, s2Nsfw, (pPorn + 0.65f * pSexy).coerceIn(0f, 1f))
+            }
+
+            // 3. NUDITY: Visible intimate nudity (either direct high porn score, or low-light / shadowed
+            // nudity where Stage 1 porn >= 0.16 is corroborated by Stage 2 OpenNSFW or enhanced Stage 1)
+            pPorn >= nudityThreshold ||
+                (s2Triggered && pPorn >= 0.20f && s2Nsfw >= 0.42f) ||
+                (illum.isLowLight && pPorn >= 0.18f && (s2Nsfw >= 0.28f || pPorn >= 0.26f)) -> {
+                ContentCategory.NUDITY to maxOf(pPorn, derivedNudityScore, s2Nsfw)
+            }
+
+            // 4. SUGGESTIVE: Sexualized but non-explicit imagery (e.g. glamour/bikini pose where Stage 2
+            // does NOT flag explicit sexual activity and porn < 0.14)
+            (pSexy >= 0.48f && pPorn < 0.14f && (!s2Triggered || s2Nsfw < 0.48f)) -> {
+                ContentCategory.SUGGESTIVE to pSexy
+            }
+
+            // 5. NON_EXPLICIT: Ordinary safe content, ordinary dark scenes, fitness, swimming, beach,
+            // fashion/underwear ads, portraits, and normal app UI
+            (combinedSafe >= 0.48f && pPorn < 0.18f) ||
+                (pSexy in 0.12f..0.48f && pPorn < 0.12f && (!s2Triggered || s2Nsfw < 0.42f)) ||
+                (s2Triggered && s2Sfw >= 0.68f && pPorn < 0.20f) ||
+                (combinedSafe >= 0.60f && pPorn < 0.05f && pHentai < 0.45f) -> {
+                ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
+            }
+
+            // 6. UNCERTAIN: Genuinely ambiguous cases where signals conflict
+            else -> {
+                val topProb = maxOf(pDrawings, pHentai, pNeutral, pPorn, pSexy)
+                ContentCategory.UNCERTAIN to topProb
+            }
+        }
+
+        val isPositiveDetection =
+            category == ContentCategory.EXPLICIT ||
+                category == ContentCategory.NUDITY ||
+                category == ContentCategory.SEXUAL_ACTIVITY
+
+        val scoresMap = linkedMapOf(
+            "drawings" to pDrawings,
+            "hentai" to pHentai,
+            "neutral" to pNeutral,
+            "porn" to pPorn,
+            "sexy" to pSexy,
+            "stage2_open_nsfw" to s2Nsfw,
+            "stage2_open_sfw" to s2Sfw,
+            "EXPLICIT" to derivedExplicitScore,
+            "NUDITY" to derivedNudityScore,
+            "SEXUAL_ACTIVITY" to sexualActivityScore,
+            "SUGGESTIVE" to pSexy,
+            "NON_EXPLICIT" to combinedSafe
+        )
+
+        return ClassificationResult(
+            scores = scoresMap,
+            predictedCategory = category.name,
+            confidence = categoryConfidence.coerceIn(0f, 1f),
+            processingDurationMs = durationMs,
             modelVersion = modelVersion,
             successful = true,
             error = null,
-            isExplicit = isExplicitOrNudity,
+            isExplicit = isPositiveDetection,
             nudityScore = derivedNudityScore,
-            explicitScore = combinedExplicit,
+            explicitScore = derivedExplicitScore,
+            sexualActivityScore = sexualActivityScore,
             suggestiveScore = pSexy,
             safeScore = combinedSafe,
             drawingsScore = pDrawings,
@@ -352,18 +720,24 @@ class LiteRtNsfwClassifier(
             neutralScore = pNeutral,
             pornScore = pPorn,
             sexyScore = pSexy,
+            stage2Triggered = s2Triggered,
+            stage2NsfwScore = s2Nsfw,
+            stage2SfwScore = s2Sfw,
+            stage2DurationMs = s2?.durationMs ?: 0L,
+            preprocessingApplied = preprocessingMode.name,
+            isLowLightFrame = illum.isLowLight,
+            meanLuminance = illum.meanLuminance,
+            originalCategory = baselineCategory,
+            originalConfidence = baselineConfidence,
             delegateUsed = activeDelegateName,
             thresholdUsed = explicitThreshold,
             modelId = modelId,
             isMockModel = false,
-            frameWidth = frameWidth,
-            frameHeight = frameHeight
+            frameWidth = INPUT_WIDTH,
+            frameHeight = INPUT_HEIGHT
         )
     }
 
-    /**
-     * Benchmarks CPU (XNNPACK 4 threads) vs NNAPI delegate on the target device.
-     */
     suspend fun benchmarkDelegate(
         sampleBitmap: Bitmap,
         testNnapi: Boolean,
@@ -396,7 +770,6 @@ class LiteRtNsfwClassifier(
                 localIn.putFloat((argb and 0xFF) / 255.0f)
             }
 
-            // 2 warmup runs
             for (w in 0 until 2) {
                 localIn.rewind()
                 benchInterpreter.run(localIn, localOut)
@@ -470,5 +843,6 @@ class LiteRtNsfwClassifier(
         }
         interpreter = null
         modelLoaded = false
+        secondStageClassifier.release()
     }
 }

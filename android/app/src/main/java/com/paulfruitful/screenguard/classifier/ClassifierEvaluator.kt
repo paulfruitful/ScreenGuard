@@ -25,7 +25,9 @@ data class EvalSampleMetadata(
 data class SingleSampleEvalResult(
     val sample: EvalSampleMetadata,
     val classification: ClassificationResult,
+    val baselineClassification: ClassificationResult?,
     val predictedPositive: Boolean,
+    val baselinePredictedPositive: Boolean,
     val isCorrectBinary: Boolean,
     val isFalsePositive: Boolean,
     val isFalseNegative: Boolean,
@@ -39,12 +41,23 @@ data class SplitEvaluationMetrics(
     val falsePositives: Int,
     val trueNegatives: Int,
     val falseNegatives: Int,
+    val uncertainCount: Int,
+    val uncertainRate: Float,
     val precision: Float,
     val recall: Float,
     val falsePositiveRate: Float,
     val falseNegativeRate: Float,
     val f1Score: Float,
     val accuracy: Float
+)
+
+data class PreprocessingModeBenchmark(
+    val modeName: String,
+    val lowLightSamplesEvaluated: Int,
+    val recallOnLowLightPositives: Float,
+    val fprOnOrdinaryDarkScenes: Float,
+    val uncertainCount: Int,
+    val avgLatencyMs: Float
 )
 
 data class FullEvaluationReport(
@@ -57,8 +70,13 @@ data class FullEvaluationReport(
     val activeDelegate: String,
     val thresholdUsed: Float,
     val testSplitMetrics: SplitEvaluationMetrics,
+    val baselineTestSplitMetrics: SplitEvaluationMetrics,
     val validationSplitMetrics: SplitEvaluationMetrics,
+    val baselineValidationSplitMetrics: SplitEvaluationMetrics,
     val overallMetrics: SplitEvaluationMetrics,
+    val baselineOverallMetrics: SplitEvaluationMetrics,
+    val preprocessingBenchmarks: List<PreprocessingModeBenchmark>,
+    val perCategoryMatrix: Map<String, Map<String, Int>>,
     val avgLatencyMs: Float,
     val p50LatencyMs: Long,
     val p95LatencyMs: Long,
@@ -93,7 +111,7 @@ object ClassifierEvaluator {
                         id = obj.optString("id"),
                         fileName = obj.optString("fileName"),
                         split = obj.optString("split", "test"),
-                        expectedGroup = obj.optString("expectedGroup", "SAFE"),
+                        expectedGroup = obj.optString("expectedGroup", "NON_EXPLICIT"),
                         isPositiveGroundTruth = obj.optBoolean("isPositiveGroundTruth", false),
                         categoryLabel = obj.optString("categoryLabel", ""),
                         description = obj.optString("description", "")
@@ -104,6 +122,12 @@ object ClassifierEvaluator {
         } catch (_: Exception) {
             emptyList()
         }
+    }
+
+    private fun isPositiveCategory(category: String): Boolean {
+        return category == ContentCategory.EXPLICIT.name ||
+            category == ContentCategory.NUDITY.name ||
+            category == ContentCategory.SEXUAL_ACTIVITY.name
     }
 
     suspend fun classifySingleSample(
@@ -123,9 +147,13 @@ object ClassifierEvaluator {
                 BitmapFactory.decodeStream(stream)
             } ?: return@withContext null
 
+            val baseline = if (classifier is LiteRtNsfwClassifier) {
+                classifier.classifyBaselineSingleStage(bitmap)
+            } else null
+
             val result = classifier.classify(bitmap)
-            val predictedPos = result.predictedCategory == ContentCategory.EXPLICIT.name ||
-                result.predictedCategory == ContentCategory.NUDITY.name
+            val predictedPos = isPositiveCategory(result.predictedCategory)
+            val baselinePos = baseline != null && isPositiveCategory(baseline.predictedCategory)
             val gtPos = meta.isPositiveGroundTruth
 
             val isFp = !gtPos && predictedPos
@@ -143,7 +171,9 @@ object ClassifierEvaluator {
             SingleSampleEvalResult(
                 sample = meta,
                 classification = result,
+                baselineClassification = baseline,
                 predictedPositive = predictedPos,
+                baselinePredictedPositive = baselinePos,
                 isCorrectBinary = isCorrect,
                 isFalsePositive = isFp,
                 isFalseNegative = isFn,
@@ -179,22 +209,27 @@ object ClassifierEvaluator {
                     if (includeDelegateBenchmark) {
                         benchmarkSampleBitmap = bmp.copy(Bitmap.Config.ARGB_8888, false)
                     }
-                    // Execute 1 warmup pass so one-time XNNPACK arena allocation is not attributed to sample 0
+                    // Warm up both Stage 1 and Stage 2 interpreters before timing sample 0
                     classifier.classify(bmp)
                 }
 
                 try {
+                    val baseline = if (classifier is LiteRtNsfwClassifier) {
+                        classifier.classifyBaselineSingleStage(bmp)
+                    } else null
+
                     val classification = classifier.classify(bmp)
-                    val predictedPos =
-                        classification.predictedCategory == ContentCategory.EXPLICIT.name ||
-                            classification.predictedCategory == ContentCategory.NUDITY.name
+                    val predictedPos = isPositiveCategory(classification.predictedCategory)
+                    val baselinePos = baseline != null && isPositiveCategory(baseline.predictedPositiveCategory())
                     val gtPos = sample.isPositiveGroundTruth
 
                     results.add(
                         SingleSampleEvalResult(
                             sample = sample,
                             classification = classification,
+                            baselineClassification = baseline,
                             predictedPositive = predictedPos,
+                            baselinePredictedPositive = baselinePos,
                             isCorrectBinary = (gtPos == predictedPos),
                             isFalsePositive = (!gtPos && predictedPos),
                             isFalseNegative = (gtPos && !predictedPos),
@@ -208,12 +243,83 @@ object ClassifierEvaluator {
                 }
             }
 
+            // Benchmark the 4 preprocessing modes independently on the low-light & dark-scene subset
+            val preprocBenchmarks = ArrayList<PreprocessingModeBenchmark>(4)
+            if (classifier is LiteRtNsfwClassifier) {
+                val lowLightSamples = samples.filter {
+                    it.id.contains("lowlight") ||
+                        it.id.contains("ordinary_dark") ||
+                        it.id == "val_erotic_art_01" ||
+                        it.id == "test_nude_study_02"
+                }
+                for (mode in PreprocessingMode.values()) {
+                    var posTotal = 0
+                    var posDetected = 0
+                    var negTotal = 0
+                    var negFp = 0
+                    var uncCount = 0
+                    var totalLat = 0L
+                    var evalCount = 0
+
+                    for (ls in lowLightSamples) {
+                        val bmp = context.assets.open("$EVAL_DIR/${ls.fileName}").use {
+                            BitmapFactory.decodeStream(it)
+                        } ?: continue
+                        try {
+                            val res = classifier.classifyWithFixedPreprocessing(
+                                bitmap = bmp,
+                                mode = mode,
+                                enableStage2 = true
+                            )
+                            evalCount++
+                            totalLat += res.processingDurationMs
+                            if (res.predictedCategory == ContentCategory.UNCERTAIN.name) {
+                                uncCount++
+                            }
+                            val predPos = isPositiveCategory(res.predictedCategory)
+                            if (ls.isPositiveGroundTruth) {
+                                posTotal++
+                                if (predPos) posDetected++
+                            } else {
+                                negTotal++
+                                if (predPos) negFp++
+                            }
+                        } finally {
+                            if (!bmp.isRecycled) bmp.recycle()
+                        }
+                    }
+
+                    preprocBenchmarks.add(
+                        PreprocessingModeBenchmark(
+                            modeName = mode.name,
+                            lowLightSamplesEvaluated = evalCount,
+                            recallOnLowLightPositives = if (posTotal > 0) posDetected.toFloat() / posTotal else 1f,
+                            fprOnOrdinaryDarkScenes = if (negTotal > 0) negFp.toFloat() / negTotal else 0f,
+                            uncertainCount = uncCount,
+                            avgLatencyMs = if (evalCount > 0) totalLat.toFloat() / evalCount else 0f
+                        )
+                    )
+                }
+            }
+
             val testResults = results.filter { it.sample.split == "test" }
             val valResults = results.filter { it.sample.split == "validation" }
 
-            val testMetrics = computeMetrics("test", testResults)
-            val valMetrics = computeMetrics("validation", valResults)
-            val overallMetrics = computeMetrics("all", results)
+            val testMetrics = computeMetrics("test", testResults, useBaseline = false)
+            val baselineTestMetrics = computeMetrics("test_baseline", testResults, useBaseline = true)
+            val valMetrics = computeMetrics("validation", valResults, useBaseline = false)
+            val baselineValMetrics = computeMetrics("validation_baseline", valResults, useBaseline = true)
+            val overallMetrics = computeMetrics("all", results, useBaseline = false)
+            val baselineOverallMetrics = computeMetrics("all_baseline", results, useBaseline = true)
+
+            // Build per-category confusion matrix (groundTruthExpectedGroup -> predictedCategory -> count)
+            val perCategoryMatrix = LinkedHashMap<String, MutableMap<String, Int>>()
+            for (r in results) {
+                val gtGroup = r.sample.expectedGroup
+                val predCat = r.classification.predictedCategory
+                val row = perCategoryMatrix.getOrPut(gtGroup) { LinkedHashMap() }
+                row[predCat] = (row[predCat] ?: 0) + 1
+            }
 
             val latencies = results
                 .map { it.classification.processingDurationMs }
@@ -252,8 +358,13 @@ object ClassifierEvaluator {
                 activeDelegate = classifier.getActiveDelegateName(),
                 thresholdUsed = thresholdUsed,
                 testSplitMetrics = testMetrics,
+                baselineTestSplitMetrics = baselineTestMetrics,
                 validationSplitMetrics = valMetrics,
+                baselineValidationSplitMetrics = baselineValMetrics,
                 overallMetrics = overallMetrics,
+                baselineOverallMetrics = baselineOverallMetrics,
+                preprocessingBenchmarks = preprocBenchmarks,
+                perCategoryMatrix = perCategoryMatrix,
                 avgLatencyMs = avgLatency,
                 p50LatencyMs = p50,
                 p95LatencyMs = p95,
@@ -280,6 +391,68 @@ object ClassifierEvaluator {
         }
     }
 
+    private fun ClassificationResult.predictedPositiveCategory(): String = this.predictedCategory
+
+    private fun computeMetrics(
+        splitName: String,
+        items: List<SingleSampleEvalResult>,
+        useBaseline: Boolean
+    ): SplitEvaluationMetrics {
+        var tp = 0
+        var fp = 0
+        var tn = 0
+        var fn = 0
+        var uncertain = 0
+
+        for (item in items) {
+            val gt = item.sample.isPositiveGroundTruth
+            val pred = if (useBaseline) item.baselinePredictedPositive else item.predictedPositive
+            val cat = if (useBaseline) {
+                item.baselineClassification?.predictedCategory ?: item.classification.originalCategory
+            } else {
+                item.classification.predictedCategory
+            }
+            if (cat == ContentCategory.UNCERTAIN.name) {
+                uncertain++
+            }
+            if (gt && pred) tp++
+            else if (!gt && pred) fp++
+            else if (!gt && !pred) tn++
+            else if (gt && !pred) fn++
+        }
+
+        val precision = if (tp + fp > 0) tp.toFloat() / (tp + fp).toFloat() else 1.0f
+        val recall = if (tp + fn > 0) tp.toFloat() / (tp + fn).toFloat() else 1.0f
+        val fpr = if (fp + tn > 0) fp.toFloat() / (fp + tn).toFloat() else 0.0f
+        val fnr = if (fn + tp > 0) fn.toFloat() / (fn + tp).toFloat() else 0.0f
+        val f1 = if (precision + recall > 0f) {
+            2f * (precision * recall) / (precision + recall)
+        } else 0f
+        val acc = if (items.isNotEmpty()) {
+            (tp + tn).toFloat() / items.size.toFloat()
+        } else 1.0f
+        val uncRate = if (items.isNotEmpty()) {
+            uncertain.toFloat() / items.size.toFloat()
+        } else 0f
+
+        return SplitEvaluationMetrics(
+            splitName = splitName,
+            totalSamples = items.size,
+            truePositives = tp,
+            falsePositives = fp,
+            trueNegatives = tn,
+            falseNegatives = fn,
+            uncertainCount = uncertain,
+            uncertainRate = uncRate,
+            precision = precision,
+            recall = recall,
+            falsePositiveRate = fpr,
+            falseNegativeRate = fnr,
+            f1Score = f1,
+            accuracy = acc
+        )
+    }
+
     private fun reportToJson(r: FullEvaluationReport): JSONObject {
         fun splitToJson(m: SplitEvaluationMetrics) = JSONObject().apply {
             put("splitName", m.splitName)
@@ -288,6 +461,8 @@ object ClassifierEvaluator {
             put("falsePositives", m.falsePositives)
             put("trueNegatives", m.trueNegatives)
             put("falseNegatives", m.falseNegatives)
+            put("uncertainCount", m.uncertainCount)
+            put("uncertainRate", m.uncertainRate.toDouble())
             put("precision", m.precision.toDouble())
             put("recall", m.recall.toDouble())
             put("falsePositiveRate", m.falsePositiveRate.toDouble())
@@ -306,6 +481,25 @@ object ClassifierEvaluator {
             put("maxLatencyMs", b.maxLatencyMs)
             put("error", b.error ?: JSONObject.NULL)
         }
+        val preprocArr = JSONArray()
+        for (pb in r.preprocessingBenchmarks) {
+            preprocArr.put(
+                JSONObject().apply {
+                    put("modeName", pb.modeName)
+                    put("lowLightSamplesEvaluated", pb.lowLightSamplesEvaluated)
+                    put("recallOnLowLightPositives", pb.recallOnLowLightPositives.toDouble())
+                    put("fprOnOrdinaryDarkScenes", pb.fprOnOrdinaryDarkScenes.toDouble())
+                    put("uncertainCount", pb.uncertainCount)
+                    put("avgLatencyMs", pb.avgLatencyMs.toDouble())
+                }
+            )
+        }
+        val matrixObj = JSONObject()
+        r.perCategoryMatrix.forEach { (gt, row) ->
+            val rObj = JSONObject()
+            row.forEach { (pred, cnt) -> rObj.put(pred, cnt) }
+            matrixObj.put(gt, rObj)
+        }
         val samplesArr = JSONArray()
         for (s in r.sampleResults) {
             val scoresObj = JSONObject()
@@ -317,10 +511,18 @@ object ClassifierEvaluator {
                     put("categoryLabel", s.sample.categoryLabel)
                     put("expectedGroup", s.sample.expectedGroup)
                     put("isPositiveGroundTruth", s.sample.isPositiveGroundTruth)
+                    put("baselineCategory", s.baselineClassification?.predictedCategory ?: s.classification.originalCategory)
+                    put("baselineConfidence", (s.baselineClassification?.confidence ?: s.classification.originalConfidence).toDouble())
                     put("predictedCategory", s.classification.predictedCategory)
                     put("confidence", s.classification.confidence.toDouble())
                     put("durationMs", s.classification.processingDurationMs)
+                    put("stage2Triggered", s.classification.stage2Triggered)
+                    put("stage2NsfwScore", s.classification.stage2NsfwScore.toDouble())
+                    put("preprocessingApplied", s.classification.preprocessingApplied)
+                    put("isLowLightFrame", s.classification.isLowLightFrame)
+                    put("meanLuminance", s.classification.meanLuminance.toDouble())
                     put("predictedPositive", s.predictedPositive)
+                    put("baselinePredictedPositive", s.baselinePredictedPositive)
                     put("isCorrectBinary", s.isCorrectBinary)
                     put("isFalsePositive", s.isFalsePositive)
                     put("isFalseNegative", s.isFalseNegative)
@@ -338,8 +540,13 @@ object ClassifierEvaluator {
             put("activeDelegate", r.activeDelegate)
             put("thresholdUsed", r.thresholdUsed.toDouble())
             put("testSplitMetrics", splitToJson(r.testSplitMetrics))
+            put("baselineTestSplitMetrics", splitToJson(r.baselineTestSplitMetrics))
             put("validationSplitMetrics", splitToJson(r.validationSplitMetrics))
+            put("baselineValidationSplitMetrics", splitToJson(r.baselineValidationSplitMetrics))
             put("overallMetrics", splitToJson(r.overallMetrics))
+            put("baselineOverallMetrics", splitToJson(r.baselineOverallMetrics))
+            put("preprocessingBenchmarks", preprocArr)
+            put("perCategoryMatrix", matrixObj)
             put("avgLatencyMs", r.avgLatencyMs.toDouble())
             put("p50LatencyMs", r.p50LatencyMs)
             put("p95LatencyMs", r.p95LatencyMs)
@@ -352,50 +559,5 @@ object ClassifierEvaluator {
             put("samples", samplesArr)
             put("timestamp", r.timestamp)
         }
-    }
-
-    private fun computeMetrics(
-        splitName: String,
-        items: List<SingleSampleEvalResult>
-    ): SplitEvaluationMetrics {
-        var tp = 0
-        var fp = 0
-        var tn = 0
-        var fn = 0
-
-        for (item in items) {
-            val gt = item.sample.isPositiveGroundTruth
-            val pred = item.predictedPositive
-            if (gt && pred) tp++
-            else if (!gt && pred) fp++
-            else if (!gt && !pred) tn++
-            else if (gt && !pred) fn++
-        }
-
-        val precision = if (tp + fp > 0) tp.toFloat() / (tp + fp).toFloat() else 1.0f
-        val recall = if (tp + fn > 0) tp.toFloat() / (tp + fn).toFloat() else 1.0f
-        val fpr = if (fp + tn > 0) fp.toFloat() / (fp + tn).toFloat() else 0.0f
-        val fnr = if (fn + tp > 0) fn.toFloat() / (fn + tp).toFloat() else 0.0f
-        val f1 = if (precision + recall > 0f) {
-            2f * (precision * recall) / (precision + recall)
-        } else 0f
-        val acc = if (items.isNotEmpty()) {
-            (tp + tn).toFloat() / items.size.toFloat()
-        } else 1.0f
-
-        return SplitEvaluationMetrics(
-            splitName = splitName,
-            totalSamples = items.size,
-            truePositives = tp,
-            falsePositives = fp,
-            trueNegatives = tn,
-            falseNegatives = fn,
-            precision = precision,
-            recall = recall,
-            falsePositiveRate = fpr,
-            falseNegativeRate = fnr,
-            f1Score = f1,
-            accuracy = acc
-        )
     }
 }

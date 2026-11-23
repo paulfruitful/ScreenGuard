@@ -539,6 +539,7 @@ class ScreenGuardModule(
             putInt("totalFramesClassified", temporalSnap.totalFramesClassified)
             putInt("explicitDetections", temporalSnap.explicitDetections)
             putInt("nudityDetections", temporalSnap.nudityDetections)
+            putInt("sexualActivityDetections", temporalSnap.sexualActivityDetections)
             putInt("suggestiveDetections", temporalSnap.suggestiveDetections)
             putInt("nonExplicitDetections", temporalSnap.nonExplicitDetections)
             putInt("safeClassifications", temporalSnap.safeClassifications)
@@ -575,7 +576,16 @@ class ScreenGuardModule(
                 "classification",
                 EventBridge.classificationResultToWritableMap(res.classification)
             )
+            if (res.baselineClassification != null) {
+                putMap(
+                    "baselineClassification",
+                    EventBridge.classificationResultToWritableMap(res.baselineClassification)
+                )
+            } else {
+                putNull("baselineClassification")
+            }
             putBoolean("predictedPositive", res.predictedPositive)
+            putBoolean("baselinePredictedPositive", res.baselinePredictedPositive)
             putBoolean("isCorrectBinary", res.isCorrectBinary)
             putBoolean("isFalsePositive", res.isFalsePositive)
             putBoolean("isFalseNegative", res.isFalseNegative)
@@ -595,6 +605,8 @@ class ScreenGuardModule(
             putInt("falsePositives", m.falsePositives)
             putInt("trueNegatives", m.trueNegatives)
             putInt("falseNegatives", m.falseNegatives)
+            putInt("uncertainCount", m.uncertainCount)
+            putDouble("uncertainRate", m.uncertainRate.toDouble())
             putDouble("precision", m.precision.toDouble())
             putDouble("recall", m.recall.toDouble())
             putDouble("falsePositiveRate", m.falsePositiveRate.toDouble())
@@ -637,8 +649,25 @@ class ScreenGuardModule(
             putString("activeDelegate", r.activeDelegate)
             putDouble("thresholdUsed", r.thresholdUsed.toDouble())
             putMap("testSplitMetrics", splitMetricsToMap(r.testSplitMetrics))
+            putMap("baselineTestSplitMetrics", splitMetricsToMap(r.baselineTestSplitMetrics))
             putMap("validationSplitMetrics", splitMetricsToMap(r.validationSplitMetrics))
+            putMap("baselineValidationSplitMetrics", splitMetricsToMap(r.baselineValidationSplitMetrics))
             putMap("overallMetrics", splitMetricsToMap(r.overallMetrics))
+            putMap("baselineOverallMetrics", splitMetricsToMap(r.baselineOverallMetrics))
+            val preprocArr = Arguments.createArray()
+            r.preprocessingBenchmarks.forEach { pb ->
+                preprocArr.pushMap(
+                    Arguments.createMap().apply {
+                        putString("modeName", pb.modeName)
+                        putInt("lowLightSamplesEvaluated", pb.lowLightSamplesEvaluated)
+                        putDouble("recallOnLowLightPositives", pb.recallOnLowLightPositives.toDouble())
+                        putDouble("fprOnOrdinaryDarkScenes", pb.fprOnOrdinaryDarkScenes.toDouble())
+                        putInt("uncertainCount", pb.uncertainCount)
+                        putDouble("avgLatencyMs", pb.avgLatencyMs.toDouble())
+                    }
+                )
+            }
+            putArray("preprocessingBenchmarks", preprocArr)
             putDouble("avgLatencyMs", r.avgLatencyMs.toDouble())
             putDouble("p50LatencyMs", r.p50LatencyMs.toDouble())
             putDouble("p95LatencyMs", r.p95LatencyMs.toDouble())

@@ -1,21 +1,24 @@
 package com.paulfruitful.screenguard.classifier
 
 /**
- * Milestone 2 final classification taxonomy:
- * - EXPLICIT: Explicit sexual activity or pornographic imagery (`porn` or `hentai` above explicit threshold).
+ * Milestone 2.1 classification taxonomy:
+ * - EXPLICIT: Explicit sexual activity or pornographic imagery.
  * - NUDITY: Visible intimate nudity.
- * - SUGGESTIVE: Sexualized but non-explicit imagery (`sexy` above suggestive threshold).
- * - NON_EXPLICIT: Ordinary skin exposure, swimming, fitness, beach photography, and similar non-explicit content.
- * - SAFE: Ordinary content (`neutral` or `drawings`).
- * - UNCERTAIN: Insufficient confidence or ambiguous probability margin.
+ * - SEXUAL_ACTIVITY: Sexual activity without complete nudity, partially clothed sexual content,
+ *   or sexualized interactions/poses corroborated across stages.
+ * - SUGGESTIVE: Sexualized but non-explicit imagery.
+ * - NON_EXPLICIT: Ordinary content, ordinary dark scenes, swimming, fitness, beach, fashion/underwear ads, portraits.
+ * - UNCERTAIN: Insufficient confidence or unresolvable inter-stage ambiguity.
+ * - SAFE: Retained as backwards-compatible alias for ordinary safe content.
  */
 enum class ContentCategory {
     EXPLICIT,
     NUDITY,
+    SEXUAL_ACTIVITY,
     SUGGESTIVE,
     NON_EXPLICIT,
-    SAFE,
-    UNCERTAIN
+    UNCERTAIN,
+    SAFE
 }
 
 data class ClassificationResult(
@@ -29,6 +32,7 @@ data class ClassificationResult(
     val isExplicit: Boolean = false,
     val nudityScore: Float = 0f,
     val explicitScore: Float = 0f,
+    val sexualActivityScore: Float = 0f,
     val suggestiveScore: Float = 0f,
     val safeScore: Float = 1f,
     val drawingsScore: Float = 0f,
@@ -36,6 +40,15 @@ data class ClassificationResult(
     val neutralScore: Float = 1f,
     val pornScore: Float = 0f,
     val sexyScore: Float = 0f,
+    val stage2Triggered: Boolean = false,
+    val stage2NsfwScore: Float = 0f,
+    val stage2SfwScore: Float = 1f,
+    val stage2DurationMs: Long = 0L,
+    val preprocessingApplied: String = "ORIGINAL",
+    val isLowLightFrame: Boolean = false,
+    val meanLuminance: Float = 128f,
+    val originalCategory: String = "NON_EXPLICIT",
+    val originalConfidence: Float = 1f,
     val consecutiveDetections: Int = 0,
     val confirmedIntervention: Boolean = false,
     val temporalState: String = "SAFE_STABLE",
@@ -44,7 +57,7 @@ data class ClassificationResult(
     val frameHash: String = "",
     val delegateUsed: String = "CPU_XNNPACK_4T",
     val thresholdUsed: Float = 0.72f,
-    val modelId: String = "nsfw-mobilenet-v2-140-224",
+    val modelId: String = "nsfw-mobilenet-v2-140-224+open-nsfw-resnet50",
     val isMockModel: Boolean = false,
     val frameWidth: Int = 224,
     val frameHeight: Int = 224,

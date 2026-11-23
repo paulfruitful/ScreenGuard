@@ -1,6 +1,7 @@
 export type ClassificationCategory =
   | 'EXPLICIT'
   | 'NUDITY'
+  | 'SEXUAL_ACTIVITY'
   | 'SUGGESTIVE'
   | 'NON_EXPLICIT'
   | 'SAFE'
@@ -28,6 +29,7 @@ export interface ClassificationResult {
   isExplicit: boolean;
   nudityScore: number;
   explicitScore: number;
+  sexualActivityScore?: number;
   suggestiveScore: number;
   safeScore: number;
   drawingsScore: number;
@@ -35,6 +37,15 @@ export interface ClassificationResult {
   neutralScore: number;
   pornScore: number;
   sexyScore: number;
+  stage2Triggered?: boolean;
+  stage2NsfwScore?: number;
+  stage2SfwScore?: number;
+  stage2DurationMs?: number;
+  preprocessingApplied?: string;
+  isLowLightFrame?: boolean;
+  meanLuminance?: number;
+  originalCategory?: string;
+  originalConfidence?: number;
   consecutiveDetections: number;
   confirmedIntervention: boolean;
   temporalState: string;
@@ -196,6 +207,7 @@ export interface MonitoringStatus {
   totalFramesClassified: number;
   explicitDetections: number;
   nudityDetections: number;
+  sexualActivityDetections?: number;
   suggestiveDetections: number;
   nonExplicitDetections: number;
   safeClassifications: number;
@@ -263,7 +275,9 @@ export interface EvalSampleMetadata {
 export interface SingleSampleEvalResult {
   sample: EvalSampleMetadata;
   classification: ClassificationResult;
+  baselineClassification?: ClassificationResult | null;
   predictedPositive: boolean;
+  baselinePredictedPositive?: boolean;
   isCorrectBinary: boolean;
   isFalsePositive: boolean;
   isFalseNegative: boolean;
@@ -277,12 +291,23 @@ export interface SplitEvaluationMetrics {
   falsePositives: number;
   trueNegatives: number;
   falseNegatives: number;
+  uncertainCount?: number;
+  uncertainRate?: number;
   precision: number;
   recall: number;
   falsePositiveRate: number;
   falseNegativeRate: number;
   f1Score: number;
   accuracy: number;
+}
+
+export interface PreprocessingModeBenchmark {
+  modeName: string;
+  lowLightSamplesEvaluated: number;
+  recallOnLowLightPositives: number;
+  fprOnOrdinaryDarkScenes: number;
+  uncertainCount: number;
+  avgLatencyMs: number;
 }
 
 export interface DelegateBenchmarkResult {
@@ -307,8 +332,12 @@ export interface FullEvaluationReport {
   activeDelegate: string;
   thresholdUsed: number;
   testSplitMetrics: SplitEvaluationMetrics;
+  baselineTestSplitMetrics?: SplitEvaluationMetrics;
   validationSplitMetrics: SplitEvaluationMetrics;
+  baselineValidationSplitMetrics?: SplitEvaluationMetrics;
   overallMetrics: SplitEvaluationMetrics;
+  baselineOverallMetrics?: SplitEvaluationMetrics;
+  preprocessingBenchmarks?: PreprocessingModeBenchmark[];
   avgLatencyMs: number;
   p50LatencyMs: number;
   p95LatencyMs: number;

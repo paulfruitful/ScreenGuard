@@ -239,20 +239,51 @@ export function ClassifierScreen({
             )}
 
             <MetricRow
-              label="Predicted Taxonomy Category"
-              value={selectedSampleResult.classification.predictedCategory}
+              label="Predicted Taxonomy Category (M2.1)"
+              value={`${selectedSampleResult.classification.predictedCategory} (${(
+                selectedSampleResult.classification.confidence * 100
+              ).toFixed(1)}%)`}
               valueColor={
                 selectedSampleResult.predictedPositive
                   ? colors.danger
                   : colors.success
               }
+              subValue={`Baseline Single-Stage (M2.0): ${
+                selectedSampleResult.classification.originalCategory || 'N/A'
+              } (${(
+                (selectedSampleResult.classification.originalConfidence || 0) *
+                100
+              ).toFixed(1)}%)`}
               mono
             />
             <MetricRow
-              label="Category Confidence"
-              value={`${(
-                selectedSampleResult.classification.confidence * 100
-              ).toFixed(2)}%`}
+              label="Preprocessing & Illumination"
+              value={`${
+                selectedSampleResult.classification.preprocessingApplied ||
+                'ORIGINAL'
+              }${
+                selectedSampleResult.classification.isLowLightFrame
+                  ? ' [LOW-LIGHT]'
+                  : ''
+              }`}
+              subValue={`Mean Luminance: ${(
+                selectedSampleResult.classification.meanLuminance || 128
+              ).toFixed(1)} / 255`}
+              mono
+            />
+            <MetricRow
+              label="Stage 2 OpenNSFW ResNet-50 Verifier"
+              value={
+                selectedSampleResult.classification.stage2Triggered
+                  ? `NSFW ${(
+                      (selectedSampleResult.classification.stage2NsfwScore ||
+                        0) * 100
+                    ).toFixed(1)}% · SFW ${(
+                      (selectedSampleResult.classification.stage2SfwScore ||
+                        0) * 100
+                    ).toFixed(1)}%`
+                  : 'Bypassed (Stage 1 unambiguous)'
+              }
               mono
             />
             <MetricRow
@@ -376,8 +407,54 @@ export function ClassifierScreen({
               )} · Acc ${(
                 evaluationReport.testSplitMetrics.accuracy * 100
               ).toFixed(1)}%`}
+              subValue={`Uncertain Rate: ${(
+                (evaluationReport.testSplitMetrics.uncertainRate || 0) * 100
+              ).toFixed(1)}% (${
+                evaluationReport.testSplitMetrics.uncertainCount || 0
+              } / ${evaluationReport.testSplitMetrics.totalSamples})`}
               mono
             />
+
+            {evaluationReport.baselineTestSplitMetrics && (
+              <MetricRow
+                label="Before (M2.0 Single-Stage Baseline)"
+                value={`Recall ${(
+                  evaluationReport.baselineTestSplitMetrics.recall * 100
+                ).toFixed(1)}% · F1 ${evaluationReport.baselineTestSplitMetrics.f1Score.toFixed(
+                  3,
+                )} · Uncertain ${(
+                  (evaluationReport.baselineTestSplitMetrics.uncertainRate ||
+                    0) * 100
+                ).toFixed(1)}%`}
+                subValue={`TP ${evaluationReport.baselineTestSplitMetrics.truePositives} · FP ${evaluationReport.baselineTestSplitMetrics.falsePositives} · TN ${evaluationReport.baselineTestSplitMetrics.trueNegatives} · FN ${evaluationReport.baselineTestSplitMetrics.falseNegatives}`}
+                mono
+              />
+            )}
+
+            {evaluationReport.preprocessingBenchmarks &&
+              evaluationReport.preprocessingBenchmarks.length > 0 && (
+                <>
+                  <Text
+                    style={[styles.reportSubheading, {marginTop: spacing.md}]}>
+                    Low-Light Preprocessing Mode Comparison
+                  </Text>
+                  {evaluationReport.preprocessingBenchmarks.map(pb => (
+                    <MetricRow
+                      key={pb.modeName}
+                      label={pb.modeName}
+                      value={`Low-Light Recall ${(
+                        pb.recallOnLowLightPositives * 100
+                      ).toFixed(0)}% · Dark FPR ${(
+                        pb.fprOnOrdinaryDarkScenes * 100
+                      ).toFixed(0)}%`}
+                      subValue={`Uncertain: ${pb.uncertainCount}/${pb.lowLightSamplesEvaluated} · Avg ${pb.avgLatencyMs.toFixed(
+                        0,
+                      )} ms`}
+                      mono
+                    />
+                  ))}
+                </>
+              )}
 
             <Text style={[styles.reportSubheading, {marginTop: spacing.md}]}>
               Validation Split (n ={' '}

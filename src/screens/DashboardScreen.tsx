@@ -233,8 +233,8 @@ export function DashboardScreen({
         </View>
 
         <MetricRow
-          label="Safe / Non-Explicit / Suggestive"
-          value={`${status.safeClassifications} Safe · ${status.nonExplicitDetections} Non-Explicit · ${status.suggestiveDetections} Suggestive`}
+          label="Safe / Non-Explicit / Sexual Activity"
+          value={`${status.nonExplicitDetections + status.safeClassifications} Non-Explicit · ${status.sexualActivityDetections || 0} Sexual Activity · ${status.suggestiveDetections} Suggestive`}
           mono
         />
         <MetricRow
@@ -266,12 +266,35 @@ export function DashboardScreen({
               value={latest.predictedCategory || latest.category}
               valueColor={
                 latest.predictedCategory === 'EXPLICIT' ||
-                latest.predictedCategory === 'NUDITY'
+                latest.predictedCategory === 'NUDITY' ||
+                latest.predictedCategory === 'SEXUAL_ACTIVITY'
                   ? colors.danger
                   : latest.predictedCategory === 'SUGGESTIVE' ||
                     latest.predictedCategory === 'UNCERTAIN'
                   ? colors.warning
                   : colors.success
+              }
+              subValue={
+                latest.originalCategory &&
+                latest.originalCategory !== latest.predictedCategory
+                  ? `Resolved from Stage 1 baseline: ${latest.originalCategory} (${(
+                      (latest.originalConfidence || 0) * 100
+                    ).toFixed(1)}%)`
+                  : undefined
+              }
+              mono
+            />
+            <MetricRow
+              label="Stage 2 & Low-Light Preprocessing"
+              value={`${latest.preprocessingApplied || 'ORIGINAL'}${
+                latest.isLowLightFrame ? ' (Low-Light L=' + (latest.meanLuminance || 0).toFixed(0) + ')' : ''
+              }`}
+              subValue={
+                latest.stage2Triggered
+                  ? `Stage 2 OpenNSFW ResNet-50: NSFW ${(
+                      (latest.stage2NsfwScore || 0) * 100
+                    ).toFixed(1)}% (${latest.stage2DurationMs || 0} ms)`
+                  : 'Stage 2 verifier not required (Stage 1 high confidence)'
               }
               mono
             />

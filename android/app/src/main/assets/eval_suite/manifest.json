@@ -30,7 +30,7 @@
     "id": "val_portrait_dark_01",
     "fileName": "val_portrait_dark_01.jpg",
     "split": "validation",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Portrait (Fitzpatrick VI)",
     "description": "Close-up portrait dark skin tone"
@@ -39,7 +39,7 @@
     "id": "val_portrait_light_01",
     "fileName": "val_portrait_light_01.jpg",
     "split": "validation",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Portrait (Fitzpatrick II)",
     "description": "Close-up portrait light skin tone"
@@ -48,7 +48,7 @@
     "id": "val_medical_01",
     "fileName": "val_medical_01.jpg",
     "split": "validation",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Medical / Educational",
     "description": "Gray anatomy medical illustration diagram"
@@ -68,8 +68,8 @@
     "split": "validation",
     "expectedGroup": "EXPLICIT",
     "isPositiveGroundTruth": true,
-    "categoryLabel": "Explicit Erotic Art (Positive)",
-    "description": "Explicit classical erotic artwork"
+    "categoryLabel": "Low-Light Sexual Content",
+    "description": "Low-light shadowed artistic figure study"
   },
   {
     "id": "test_swimming_01",
@@ -120,7 +120,7 @@
     "id": "test_medical_01",
     "fileName": "test_medical_01.jpg",
     "split": "test",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Medical / Educational",
     "description": "Anatomical muscular system diagram"
@@ -138,7 +138,7 @@
     "id": "test_portrait_tone1",
     "fileName": "test_portrait_tone1.jpg",
     "split": "test",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Portrait (Fitzpatrick I-II)",
     "description": "Studio portrait fair skin tone"
@@ -147,7 +147,7 @@
     "id": "test_portrait_tone4",
     "fileName": "test_portrait_tone4.jpg",
     "split": "test",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Portrait (Fitzpatrick III-IV)",
     "description": "Portrait olive/brown skin tone"
@@ -156,7 +156,7 @@
     "id": "test_portrait_tone6",
     "fileName": "test_portrait_tone6.jpg",
     "split": "test",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Portrait (Fitzpatrick V-VI)",
     "description": "Portrait deep brown/dark skin tone"
@@ -165,7 +165,7 @@
     "id": "test_ui_article",
     "fileName": "test_ui_article.jpg",
     "split": "test",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Mobile UI Screenshot",
     "description": "Mobile news article interface"
@@ -174,7 +174,7 @@
     "id": "test_drawings_anime",
     "fileName": "test_drawings_anime.jpg",
     "split": "test",
-    "expectedGroup": "SAFE",
+    "expectedGroup": "NON_EXPLICIT",
     "isPositiveGroundTruth": false,
     "categoryLabel": "Illustration / Drawing",
     "description": "Anime manga style character illustration"
@@ -194,8 +194,8 @@
     "split": "test",
     "expectedGroup": "NUDITY",
     "isPositiveGroundTruth": true,
-    "categoryLabel": "Classical Nude Figure (Positive)",
-    "description": "Academic nude painting figure"
+    "categoryLabel": "Low-Light Sexual Content",
+    "description": "Low-light monochrome shadowed nude study"
   },
   {
     "id": "test_explicit_study_01",
@@ -214,5 +214,113 @@
     "isPositiveGroundTruth": true,
     "categoryLabel": "Explicit Study 2 (Positive)",
     "description": "Explicit classical fresco"
+  },
+  {
+    "id": "val_lowlight_sexual_01",
+    "fileName": "val_lowlight_sexual_01.jpg",
+    "split": "validation",
+    "expectedGroup": "SEXUAL_ACTIVITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Low-Light Sexual Content",
+    "description": "Low-light intimate figure study in dark environment (gamma/shadow compressed)"
+  },
+  {
+    "id": "val_partial_clothed_01",
+    "fileName": "val_partial_clothed_01.jpg",
+    "split": "validation",
+    "expectedGroup": "SEXUAL_ACTIVITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Partially Clothed Sexual",
+    "description": "Partially clothed erotic couple embrace photography"
+  },
+  {
+    "id": "val_ordinary_dark_01",
+    "fileName": "val_ordinary_dark_01.jpg",
+    "split": "validation",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Ordinary Dark Scene",
+    "description": "Night city street and dark interior photography"
+  },
+  {
+    "id": "val_suggestive_pose_01",
+    "fileName": "val_suggestive_pose_01.jpg",
+    "split": "validation",
+    "expectedGroup": "SUGGESTIVE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Suggestive Non-Explicit",
+    "description": "Glamour fashion pose non-explicit photograph"
+  },
+  {
+    "id": "test_lowlight_sexual_01",
+    "fileName": "test_lowlight_sexual_01.jpg",
+    "split": "test",
+    "expectedGroup": "NUDITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Low-Light Sexual Content",
+    "description": "Dark chiaroscuro low-light nude figure photograph"
+  },
+  {
+    "id": "test_lowlight_sexual_02",
+    "fileName": "test_lowlight_sexual_02.jpg",
+    "split": "test",
+    "expectedGroup": "SEXUAL_ACTIVITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Low-Light Sexual Content",
+    "description": "Dimly lit bedroom intimate sexual pose photograph"
+  },
+  {
+    "id": "test_sexual_nonudity_01",
+    "fileName": "test_sexual_nonudity_01.jpg",
+    "split": "test",
+    "expectedGroup": "SEXUAL_ACTIVITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Sexual Content (No Full Nudity)",
+    "description": "Intimate sexual interaction without full genital exposure"
+  },
+  {
+    "id": "test_partial_clothed_01",
+    "fileName": "test_partial_clothed_01.jpg",
+    "split": "test",
+    "expectedGroup": "SEXUAL_ACTIVITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Partially Clothed Sexual",
+    "description": "Partially clothed boudoir lingerie sexualized pose"
+  },
+  {
+    "id": "test_suggestive_01",
+    "fileName": "test_suggestive_01.jpg",
+    "split": "test",
+    "expectedGroup": "SUGGESTIVE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Suggestive Non-Explicit",
+    "description": "Suggestive red-carpet / swimwear pose without explicit nudity"
+  },
+  {
+    "id": "test_ordinary_dark_01",
+    "fileName": "test_ordinary_dark_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Ordinary Dark Scene",
+    "description": "Dark room interior at night with dim ambient lighting"
+  },
+  {
+    "id": "test_ordinary_dark_02",
+    "fileName": "test_ordinary_dark_02.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Ordinary Dark Scene",
+    "description": "Low-light night concert / dark portrait scene"
+  },
+  {
+    "id": "test_underwear_ad_01",
+    "fileName": "test_underwear_ad_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Fashion & Underwear Ad",
+    "description": "Commercial underwear / apparel catalog advertisement"
   }
 ]
