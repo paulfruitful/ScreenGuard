@@ -1,0 +1,218 @@
+[
+  {
+    "id": "val_swimming_01",
+    "fileName": "val_swimming_01.jpg",
+    "split": "validation",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Swimming",
+    "description": "Olympic swimmer pool competition photograph"
+  },
+  {
+    "id": "val_fitness_01",
+    "fileName": "val_fitness_01.jpg",
+    "split": "validation",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Gym & Fitness",
+    "description": "Bodybuilding fitness athlete workout"
+  },
+  {
+    "id": "val_beach_01",
+    "fileName": "val_beach_01.jpg",
+    "split": "validation",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Beach Photography",
+    "description": "Sunny beach coastline people walking"
+  },
+  {
+    "id": "val_portrait_dark_01",
+    "fileName": "val_portrait_dark_01.jpg",
+    "split": "validation",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Portrait (Fitzpatrick VI)",
+    "description": "Close-up portrait dark skin tone"
+  },
+  {
+    "id": "val_portrait_light_01",
+    "fileName": "val_portrait_light_01.jpg",
+    "split": "validation",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Portrait (Fitzpatrick II)",
+    "description": "Close-up portrait light skin tone"
+  },
+  {
+    "id": "val_medical_01",
+    "fileName": "val_medical_01.jpg",
+    "split": "validation",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Medical / Educational",
+    "description": "Gray anatomy medical illustration diagram"
+  },
+  {
+    "id": "val_figure_nude_01",
+    "fileName": "val_figure_nude_01.jpg",
+    "split": "validation",
+    "expectedGroup": "NUDITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Classical Figure Nude (Positive)",
+    "description": "Fine art nude figure study painting"
+  },
+  {
+    "id": "val_erotic_art_01",
+    "fileName": "val_erotic_art_01.jpg",
+    "split": "validation",
+    "expectedGroup": "EXPLICIT",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Explicit Erotic Art (Positive)",
+    "description": "Explicit classical erotic artwork"
+  },
+  {
+    "id": "test_swimming_01",
+    "fileName": "test_swimming_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Swimming",
+    "description": "Freestyle swimmer in swimming pool"
+  },
+  {
+    "id": "test_gym_01",
+    "fileName": "test_gym_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Gym & Fitness",
+    "description": "Athletic runner fitness training"
+  },
+  {
+    "id": "test_sports_01",
+    "fileName": "test_sports_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Sports",
+    "description": "Beach volleyball match action"
+  },
+  {
+    "id": "test_beach_01",
+    "fileName": "test_beach_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Beach Photography",
+    "description": "Tropical beach surfer coastline"
+  },
+  {
+    "id": "test_breastfeeding_01",
+    "fileName": "test_breastfeeding_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Breastfeeding / Maternal",
+    "description": "Mother breastfeeding infant photograph"
+  },
+  {
+    "id": "test_medical_01",
+    "fileName": "test_medical_01.jpg",
+    "split": "test",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Medical / Educational",
+    "description": "Anatomical muscular system diagram"
+  },
+  {
+    "id": "test_fashion_01",
+    "fileName": "test_fashion_01.jpg",
+    "split": "test",
+    "expectedGroup": "NON_EXPLICIT",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Fashion & Swimwear Ad",
+    "description": "Fashion runway swimwear model"
+  },
+  {
+    "id": "test_portrait_tone1",
+    "fileName": "test_portrait_tone1.jpg",
+    "split": "test",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Portrait (Fitzpatrick I-II)",
+    "description": "Studio portrait fair skin tone"
+  },
+  {
+    "id": "test_portrait_tone4",
+    "fileName": "test_portrait_tone4.jpg",
+    "split": "test",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Portrait (Fitzpatrick III-IV)",
+    "description": "Portrait olive/brown skin tone"
+  },
+  {
+    "id": "test_portrait_tone6",
+    "fileName": "test_portrait_tone6.jpg",
+    "split": "test",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Portrait (Fitzpatrick V-VI)",
+    "description": "Portrait deep brown/dark skin tone"
+  },
+  {
+    "id": "test_ui_article",
+    "fileName": "test_ui_article.jpg",
+    "split": "test",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Mobile UI Screenshot",
+    "description": "Mobile news article interface"
+  },
+  {
+    "id": "test_drawings_anime",
+    "fileName": "test_drawings_anime.jpg",
+    "split": "test",
+    "expectedGroup": "SAFE",
+    "isPositiveGroundTruth": false,
+    "categoryLabel": "Illustration / Drawing",
+    "description": "Anime manga style character illustration"
+  },
+  {
+    "id": "test_nude_study_01",
+    "fileName": "test_nude_study_01.jpg",
+    "split": "test",
+    "expectedGroup": "NUDITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Artistic Nude Photography (Positive)",
+    "description": "Fine art nude photography figure study"
+  },
+  {
+    "id": "test_nude_study_02",
+    "fileName": "test_nude_study_02.jpg",
+    "split": "test",
+    "expectedGroup": "NUDITY",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Classical Nude Figure (Positive)",
+    "description": "Academic nude painting figure"
+  },
+  {
+    "id": "test_explicit_study_01",
+    "fileName": "test_explicit_study_01.jpg",
+    "split": "test",
+    "expectedGroup": "EXPLICIT",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Explicit Study 1 (Positive)",
+    "description": "Explicit anatomical/erotic study"
+  },
+  {
+    "id": "test_explicit_study_02",
+    "fileName": "test_explicit_study_02.jpg",
+    "split": "test",
+    "expectedGroup": "EXPLICIT",
+    "isPositiveGroundTruth": true,
+    "categoryLabel": "Explicit Study 2 (Positive)",
+    "description": "Explicit classical fresco"
+  }
+]

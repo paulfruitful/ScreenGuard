@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Screen Guard</string>
+    <string name="accessibility_service_label">Screen Guard Content Observer</string>
+    <string name="accessibility_service_summary">On-device visual content safety observer using Android Accessibility screenshot APIs</string>
+    <string name="accessibility_service_description">Screen Guard observes active window changes and captures on-device accessibility screenshots in volatile memory to detect explicit imagery locally. Screenshots are never saved to disk or uploaded, and passwords or typed input are never collected. You can pause or disable Screen Guard at any time.</string>
+</resources>
