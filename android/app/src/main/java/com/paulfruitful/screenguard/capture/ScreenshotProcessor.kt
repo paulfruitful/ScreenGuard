@@ -79,6 +79,7 @@ object ScreenshotProcessor {
         BufferReleaseTracker.onHardwareBufferAcquired()
 
         var hardwareBitmap: Bitmap? = null
+        var softwareFullBitmap: Bitmap? = null
         var softwareClassifierBitmap: Bitmap? = null
         var centerFeedCropBitmap: Bitmap? = null
         var actionFeedCropBitmap: Bitmap? = null
@@ -92,7 +93,9 @@ object ScreenshotProcessor {
         var preprocessDurationMs = 1L
 
         try {
-            // 1. Direct HardwareBuffer -> 224x224 ARGB_8888 downsampling (zero 1080x2400 software copy!)
+            // 1. Convert HardwareBuffer -> ARGB_8888 via GPU readback (`wrapped.copy(ARGB_8888, false)`),
+            // extract the 224x224 full-screen + native-resolution center/action ROI crops, and immediately
+            // recycle BOTH the HardwareBuffer and full-screen bitmap before inference starts!
             try {
                 origWidth = hardwareBuffer.width
                 origHeight = hardwareBuffer.height
@@ -102,71 +105,84 @@ object ScreenshotProcessor {
                     BufferReleaseTracker.onBitmapAllocated()
                     hardwareBitmap = wrapped
 
-                    val target224 = Bitmap.createBitmap(
-                        CLASSIFIER_TARGET_SIZE,
-                        CLASSIFIER_TARGET_SIZE,
-                        Bitmap.Config.ARGB_8888
-                    )
-                    BufferReleaseTracker.onBitmapAllocated()
-                    val dstRect = Rect(0, 0, CLASSIFIER_TARGET_SIZE, CLASSIFIER_TARGET_SIZE)
-                    val srcRect = Rect(0, 0, origWidth, origHeight)
-                    Canvas(target224).drawBitmap(wrapped, srcRect, dstRect, scalePaint)
-                    softwareClassifierBitmap = target224
-
-                    // Extract native-resolution social-media video/feed ROI crops directly from the
-                    // HardwareBuffer before closing it so in-feed videos on X/Twitter, Instagram,
-                    // TikTok, Facebook, Reddit, and Chrome are not squashed by surrounding UI chrome.
-                    if (origWidth >= 300 && origHeight >= 400) {
-                        val centerCrop = Bitmap.createBitmap(
-                            CLASSIFIER_TARGET_SIZE,
-                            CLASSIFIER_TARGET_SIZE,
-                            Bitmap.Config.ARGB_8888
-                        )
-                        BufferReleaseTracker.onBitmapAllocated()
-                        val centerSrc = Rect(
-                            (origWidth * 0.03f).toInt(),
-                            (origHeight * 0.16f).toInt(),
-                            (origWidth * 0.97f).toInt(),
-                            (origHeight * 0.78f).toInt()
-                        )
-                        Canvas(centerCrop).drawBitmap(wrapped, centerSrc, dstRect, scalePaint)
-                        centerFeedCropBitmap = centerCrop
-
-                        val actionCrop = Bitmap.createBitmap(
-                            CLASSIFIER_TARGET_SIZE,
-                            CLASSIFIER_TARGET_SIZE,
-                            Bitmap.Config.ARGB_8888
-                        )
-                        BufferReleaseTracker.onBitmapAllocated()
-                        val actionSrc = Rect(
-                            (origWidth * 0.08f).toInt(),
-                            (origHeight * 0.30f).toInt(),
-                            (origWidth * 0.92f).toInt(),
-                            (origHeight * 0.78f).toInt()
-                        )
-                        Canvas(actionCrop).drawBitmap(wrapped, actionSrc, dstRect, scalePaint)
-                        actionFeedCropBitmap = actionCrop
+                    val copied = wrapped.copy(Bitmap.Config.ARGB_8888, false)
+                    // Close hardware bitmap & HardwareBuffer immediately after GPU readback
+                    if (!wrapped.isRecycled) {
+                        wrapped.recycle()
                     }
+                    BufferReleaseTracker.onBitmapRecycled()
+                    hardwareBitmap = null
 
-                    if (holdInMemoryPreview) {
-                        val ratio = minOf(
-                            1.0f,
-                            PREVIEW_MAX_DIMENSION.toFloat() / max(origWidth, origHeight).toFloat()
-                        )
-                        val pW = max(64, (origWidth * ratio).toInt())
-                        val pH = max(64, (origHeight * ratio).toInt())
-                        val pBmp = Bitmap.createBitmap(pW, pH, Bitmap.Config.ARGB_8888)
+                    if (copied != null) {
                         BufferReleaseTracker.onBitmapAllocated()
-                        previewBitmap = pBmp
-                        val pCanvas = Canvas(pBmp)
-                        pCanvas.drawBitmap(wrapped, srcRect, Rect(0, 0, pW, pH), scalePaint)
-                        val out = ByteArrayOutputStream(16384)
-                        pBmp.compress(Bitmap.CompressFormat.JPEG, 72, out)
-                        debugBase64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                        softwareFullBitmap = copied
+
+                        val target224 = Bitmap.createBitmap(
+                            CLASSIFIER_TARGET_SIZE,
+                            CLASSIFIER_TARGET_SIZE,
+                            Bitmap.Config.ARGB_8888
+                        )
+                        BufferReleaseTracker.onBitmapAllocated()
+                        val dstRect = Rect(0, 0, CLASSIFIER_TARGET_SIZE, CLASSIFIER_TARGET_SIZE)
+                        val srcRect = Rect(0, 0, origWidth, origHeight)
+                        Canvas(target224).drawBitmap(copied, srcRect, dstRect, scalePaint)
+                        softwareClassifierBitmap = target224
+
+                        // Extract native-resolution social-media video/feed ROI crops directly from the
+                        // full-resolution ARGB_8888 frame before recycling it so in-feed videos on
+                        // X/Twitter, Instagram, TikTok, Facebook, Reddit, and Chrome are sharp and undistorted.
+                        if (origWidth >= 300 && origHeight >= 400) {
+                            val centerCrop = Bitmap.createBitmap(
+                                CLASSIFIER_TARGET_SIZE,
+                                CLASSIFIER_TARGET_SIZE,
+                                Bitmap.Config.ARGB_8888
+                            )
+                            BufferReleaseTracker.onBitmapAllocated()
+                            val centerSrc = Rect(
+                                (origWidth * 0.03f).toInt(),
+                                (origHeight * 0.16f).toInt(),
+                                (origWidth * 0.97f).toInt(),
+                                (origHeight * 0.78f).toInt()
+                            )
+                            Canvas(centerCrop).drawBitmap(copied, centerSrc, dstRect, scalePaint)
+                            centerFeedCropBitmap = centerCrop
+
+                            val actionCrop = Bitmap.createBitmap(
+                                CLASSIFIER_TARGET_SIZE,
+                                CLASSIFIER_TARGET_SIZE,
+                                Bitmap.Config.ARGB_8888
+                            )
+                            BufferReleaseTracker.onBitmapAllocated()
+                            val actionSrc = Rect(
+                                (origWidth * 0.08f).toInt(),
+                                (origHeight * 0.30f).toInt(),
+                                (origWidth * 0.92f).toInt(),
+                                (origHeight * 0.78f).toInt()
+                            )
+                            Canvas(actionCrop).drawBitmap(copied, actionSrc, dstRect, scalePaint)
+                            actionFeedCropBitmap = actionCrop
+                        }
+
+                        if (holdInMemoryPreview) {
+                            val ratio = minOf(
+                                1.0f,
+                                PREVIEW_MAX_DIMENSION.toFloat() / max(origWidth, origHeight).toFloat()
+                            )
+                            val pW = max(64, (origWidth * ratio).toInt())
+                            val pH = max(64, (origHeight * ratio).toInt())
+                            val pBmp = Bitmap.createBitmap(pW, pH, Bitmap.Config.ARGB_8888)
+                            BufferReleaseTracker.onBitmapAllocated()
+                            previewBitmap = pBmp
+                            val pCanvas = Canvas(pBmp)
+                            pCanvas.drawBitmap(copied, srcRect, Rect(0, 0, pW, pH), scalePaint)
+                            val out = ByteArrayOutputStream(16384)
+                            pBmp.compress(Bitmap.CompressFormat.JPEG, 72, out)
+                            debugBase64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                        }
                     }
                 }
             } finally {
-                // Immediately release hardwareBitmap & HardwareBuffer (< 3 ms total hold time!)
+                // Immediately release hardwareBitmap, HardwareBuffer, and softwareFullBitmap (< 6 ms hold time!)
                 hardwareBitmap?.let { bmp ->
                     if (!bmp.isRecycled) {
                         bmp.recycle()
@@ -180,6 +196,14 @@ object ScreenshotProcessor {
                 } catch (_: Exception) {
                 }
                 BufferReleaseTracker.onHardwareBufferClosed()
+
+                softwareFullBitmap?.let { fullBmp ->
+                    if (!fullBmp.isRecycled) {
+                        fullBmp.recycle()
+                    }
+                    BufferReleaseTracker.onBitmapRecycled()
+                }
+                softwareFullBitmap = null
 
                 previewBitmap?.let { pBmp ->
                     if (!pBmp.isRecycled) {
