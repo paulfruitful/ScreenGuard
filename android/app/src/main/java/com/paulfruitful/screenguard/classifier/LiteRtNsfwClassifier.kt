@@ -3,6 +3,7 @@ package com.paulfruitful.screenguard.classifier
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import com.paulfruitful.screenguard.accessibility.ScreenTextContextAnalyzer
 import com.paulfruitful.screenguard.storage.LocalStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -380,8 +381,44 @@ class LiteRtNsfwClassifier(
 
                 var effectiveS1 = origS1
                 var appliedMode = PreprocessingMode.ORIGINAL
+                val textSignal = ScreenTextContextAnalyzer.getLatestSignal()
 
-                // 2. Low-light enhancement path: only evaluate enhanced frames when the scene is
+                // 2. Multi-Region ROI Visual Scan for Vertical Mobile Videos & Social Feeds:
+                // Full-screen 1080x2400 captures often contain 40% ceiling/background and 25% UI controls,
+                // squashing the central action when resized to 224x224.
+                if ((origS1.porn >= 0.06f && (origS1.sexy >= 0.018f || origS1.porn >= 0.35f)) ||
+                    textSignal.adultScore >= 0.35f
+                ) {
+                    val cropCenter = extractSubCrop224(targetBmp, 0.0f, 0.18f, 1.0f, 0.78f)
+                    val cropAction = extractSubCrop224(targetBmp, 0.10f, 0.38f, 0.90f, 0.76f)
+                    val cropLower = extractSubCrop224(targetBmp, 0.15f, 0.45f, 0.85f, 0.82f)
+                    try {
+                        val centerS1 = inferenceMutex.withLock { runStage1Locked(cropCenter) }
+                        val actionS1 = inferenceMutex.withLock { runStage1Locked(cropAction) }
+                        val lowerS1 = inferenceMutex.withLock { runStage1Locked(cropLower) }
+
+                        val maxActionPorn = maxOf(actionS1.porn, lowerS1.porn)
+                        val maxAllPorn = maxOf(centerS1.porn, actionS1.porn, lowerS1.porn)
+                        val roiConfirmed =
+                            (centerS1.porn >= 0.38f && maxActionPorn >= 0.72f) ||
+                                (textSignal.adultScore >= 0.45f && maxAllPorn >= 0.36f) ||
+                                (textSignal.isExplicitPornDomain && maxAllPorn >= 0.15f)
+
+                        if (roiConfirmed) {
+                            val bestCropS1 = listOf(centerS1, actionS1, lowerS1)
+                                .maxByOrNull { it.porn + 0.5f * it.sexy } ?: actionS1
+                            if (bestCropS1.porn > effectiveS1.porn) {
+                                effectiveS1 = bestCropS1
+                            }
+                        }
+                    } finally {
+                        if (!cropCenter.isRecycled) cropCenter.recycle()
+                        if (!cropAction.isRecycled) cropAction.recycle()
+                        if (!cropLower.isRecycled) cropLower.recycle()
+                    }
+                }
+
+                // 2b. Low-light enhancement path: only evaluate enhanced frames when the scene is
                 // genuinely low-light (`illum.isLowLight`) and not a clean vector drawing.
                 if (illum.isLowLight && origS1.drawings < 0.80f) {
                     claheBmp = LowLightPreprocessor.applyClaheLocalContrast(targetBmp)
@@ -477,6 +514,28 @@ class LiteRtNsfwClassifier(
                 resizedTemp?.let { if (!it.isRecycled) it.recycle() }
             }
         }
+
+    private fun extractSubCrop224(
+        src: Bitmap,
+        x0Frac: Float,
+        y0Frac: Float,
+        x1Frac: Float,
+        y1Frac: Float
+    ): Bitmap {
+        val x0 = (src.width * x0Frac).toInt().coerceIn(0, src.width - 2)
+        val y0 = (src.height * y0Frac).toInt().coerceIn(0, src.height - 2)
+        val x1 = (src.width * x1Frac).toInt().coerceIn(x0 + 1, src.width)
+        val y1 = (src.height * y1Frac).toInt().coerceIn(y0 + 1, src.height)
+        val sub = Bitmap.createBitmap(src, x0, y0, x1 - x0, y1 - y0)
+        if (sub.width == INPUT_WIDTH && sub.height == INPUT_HEIGHT) {
+            return sub
+        }
+        val scaled = Bitmap.createScaledBitmap(sub, INPUT_WIDTH, INPUT_HEIGHT, true)
+        if (scaled !== sub && !sub.isRecycled) {
+            sub.recycle()
+        }
+        return scaled
+    }
 
     private fun interpretBaselineSingleStage(
         s1: RawStage1Scores,
@@ -584,6 +643,11 @@ class LiteRtNsfwClassifier(
 
         val combinedSafe = (pNeutral + pDrawings).coerceIn(0f, 1f)
         val s1Explicit = (pPorn + pHentai).coerceIn(0f, 1f)
+        val textSignal = ScreenTextContextAnalyzer.getLatestSignal()
+        val hasExplicitTextContext =
+            textSignal.isExplicitPornDomain ||
+                (textSignal.adultScore >= 0.65f && (pPorn + pSexy >= 0.10f || s2Nsfw >= 0.22f)) ||
+                (textSignal.adultScore >= 0.45f && (pPorn >= 0.22f || (pPorn + pSexy) >= 0.32f))
 
         // Breastfeeding / infant maternal care false-positive guard:
         // When Stage 1 has moderate `porn` (0.15..0.32) with near-zero `sexy` (< 0.03) and high `neutral` (> 0.68),
@@ -630,6 +694,18 @@ class LiteRtNsfwClassifier(
         }
 
         val (category, categoryConfidence) = when {
+            textSignal.isExplicitPornDomain -> {
+                ContentCategory.EXPLICIT to maxOf(0.95f, pPorn, derivedExplicitScore)
+            }
+
+            hasExplicitTextContext && pPorn >= 0.35f -> {
+                ContentCategory.EXPLICIT to maxOf(0.85f, pPorn, derivedExplicitScore)
+            }
+
+            hasExplicitTextContext -> {
+                ContentCategory.SEXUAL_ACTIVITY to maxOf(0.76f, sexualActivityScore, textSignal.adultScore)
+            }
+
             isOrdinaryDarkScene || isLikelyNonSexualSkinExposure -> {
                 ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
             }
