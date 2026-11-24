@@ -24,11 +24,11 @@ export function MetricRow({
       <Text style={styles.label}>{label}</Text>
       <View style={styles.valueWrap}>
         <Text
-          numberOfLines={1}
+          numberOfLines={2}
           style={[
             styles.value,
             {color: valueColor},
-            mono && {fontFamily: typography.mono, fontSize: 12.5},
+            mono && {fontFamily: typography.mono, fontSize: 12},
           ]}>
           {value}
         </Text>

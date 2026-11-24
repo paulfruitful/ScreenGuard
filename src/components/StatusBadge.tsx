@@ -46,7 +46,7 @@ function getPalette(tone: BadgeTone) {
       return {
         bg: colors.warningSoft,
         border: colors.warningBorder,
-        text: colors.warning,
+        text: '#B45309',
       };
     case 'danger':
       return {
@@ -58,13 +58,13 @@ function getPalette(tone: BadgeTone) {
       return {
         bg: colors.accentSoft,
         border: colors.accentBorder,
-        text: '#60A5FA',
+        text: colors.accent,
       };
     case 'neutral':
     default:
       return {
         bg: colors.neutralBadge,
-        border: colors.borderStrong,
+        border: colors.border,
         text: colors.textSecondary,
       };
   }
@@ -89,7 +89,6 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
 });

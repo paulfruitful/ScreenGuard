@@ -10,44 +10,38 @@ import {
   SafeAreaProvider,
   SafeAreaView,
 } from 'react-native-safe-area-context';
-import {StatusBadge} from '../components/StatusBadge';
+import {
+  BarsIcon,
+  HomeIcon,
+  SettingsGearIcon,
+  ShieldCheckIcon,
+} from '../components/AppIcons';
 import {useScreenGuard} from '../hooks/useScreenGuard';
 import {ActivityScreen} from '../screens/ActivityScreen';
-import {ClassifierScreen} from '../screens/ClassifierScreen';
 import {DashboardScreen} from '../screens/DashboardScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {TestingScreen} from '../screens/TestingScreen';
-import {colors, spacing, typography} from '../theme/theme';
+import {colors, radius, spacing, typography} from '../theme/theme';
 
-export type TabKey =
-  | 'DASHBOARD'
-  | 'CLASSIFIER'
-  | 'ACTIVITY'
-  | 'TESTING'
-  | 'SETTINGS';
+export type TabKey = 'HOME' | 'ACTIVITY' | 'CAPTURE' | 'SETTINGS';
 
 const TABS: {key: TabKey; label: string}[] = [
-  {key: 'DASHBOARD', label: 'Dashboard'},
-  {key: 'CLASSIFIER', label: 'Classifier'},
+  {key: 'HOME', label: 'Home'},
   {key: 'ACTIVITY', label: 'Activity'},
-  {key: 'TESTING', label: 'Capture'},
+  {key: 'CAPTURE', label: 'Capture'},
   {key: 'SETTINGS', label: 'Settings'},
 ];
 
 export function MainNavigator() {
-  const [activeTab, setActiveTab] = useState<TabKey>('DASHBOARD');
+  const [activeTab, setActiveTab] = useState<TabKey>('HOME');
   const {
     status,
     preferences,
     activityLogs,
     compatibilityRecords,
-    evalSamples,
-    selectedSampleResult,
-    evaluationReport,
     debugPreview,
     debounceTestResult,
     isCapturingTest,
-    isRunningEvaluation,
     lastError,
     refreshAll,
     openAccessibilitySettings,
@@ -62,46 +56,26 @@ export function MainNavigator() {
     runDebounceTest,
     runDisconnectionTest,
     recordCompatibilityResult,
-    initializeLiteRtModel,
-    runSingleSampleClassification,
-    runFullEvaluationBenchmark,
   } = useScreenGuard();
 
-  const monitoringActive =
-    status.accessibilityPermissionGranted &&
-    status.serviceConnected &&
-    status.protectionEnabled;
+  const renderTabIcon = (key: TabKey, isActive: boolean) => {
+    const color = isActive ? colors.accent : '#64748B';
+    switch (key) {
+      case 'HOME':
+        return <HomeIcon color={color} size={20} />;
+      case 'ACTIVITY':
+        return <BarsIcon color={color} size={20} />;
+      case 'CAPTURE':
+        return <ShieldCheckIcon color={color} size={20} />;
+      case 'SETTINGS':
+        return <SettingsGearIcon color={color} size={21} />;
+    }
+  };
 
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <StatusBar barStyle="light-content" />
-
-        {/* Top Application Header with Persistent Monitoring Indicator */}
-        <View style={styles.topHeader}>
-          <View>
-            <Text style={styles.brandTitle}>Screen Guard</Text>
-            <Text style={styles.brandSubtitle}>
-              System-Wide Content Filtering & Protective Overlay
-            </Text>
-          </View>
-          <StatusBadge
-            label={
-              monitoringActive
-                ? 'Observing'
-                : status.accessibilityPermissionGranted
-                ? 'Paused'
-                : 'Permission Needed'
-            }
-            tone={
-              monitoringActive
-                ? 'success'
-                : status.accessibilityPermissionGranted
-                ? 'neutral'
-                : 'warning'
-            }
-          />
-        </View>
 
         {lastError ? (
           <View style={styles.errorBanner}>
@@ -112,33 +86,21 @@ export function MainNavigator() {
         ) : null}
 
         {/* Active Screen Viewport */}
-        <View style={styles.viewport}>
-          {activeTab === 'DASHBOARD' && (
+        <View
+          style={[
+            styles.viewport,
+            activeTab === 'HOME' && {backgroundColor: colors.royalBlue},
+          ]}>
+          {activeTab === 'HOME' && (
             <DashboardScreen
               status={status}
               preferences={preferences}
+              activityLogs={activityLogs}
               onOpenAccessibilitySettings={openAccessibilitySettings}
-              onOpenOverlaySettings={openOverlaySettings}
               onToggleProtection={toggleProtection}
-              onUpdatePreferences={updatePreferences}
-              onTriggerOverlayTest={triggerOverlayTest}
-              onDismissOverlay={dismissActiveOverlay}
-              onNavigateToTesting={() => setActiveTab('TESTING')}
-              onNavigateToClassifier={() => setActiveTab('CLASSIFIER')}
+              onNavigateToActivity={() => setActiveTab('ACTIVITY')}
+              onNavigateToSettings={() => setActiveTab('SETTINGS')}
               onRefresh={refreshAll}
-            />
-          )}
-
-          {activeTab === 'CLASSIFIER' && (
-            <ClassifierScreen
-              status={status}
-              evalSamples={evalSamples}
-              selectedSampleResult={selectedSampleResult}
-              evaluationReport={evaluationReport}
-              isRunningEvaluation={isRunningEvaluation}
-              onInitializeModel={initializeLiteRtModel}
-              onClassifySample={runSingleSampleClassification}
-              onRunFullEvaluation={runFullEvaluationBenchmark}
             />
           )}
 
@@ -150,7 +112,7 @@ export function MainNavigator() {
             />
           )}
 
-          {activeTab === 'TESTING' && (
+          {activeTab === 'CAPTURE' && (
             <TestingScreen
               status={status}
               compatibilityRecords={compatibilityRecords}
@@ -181,31 +143,38 @@ export function MainNavigator() {
           )}
         </View>
 
-        {/* Bottom Navigation Bar */}
-        <View style={styles.bottomTabBar}>
-          {TABS.map(tab => {
-            const isActive = activeTab === tab.key;
-            return (
-              <Pressable
-                key={tab.key}
-                onPress={() => setActiveTab(tab.key)}
-                style={styles.tabItem}>
-                <View
-                  style={[
-                    styles.tabIndicator,
-                    isActive && styles.tabIndicatorActive,
-                  ]}
-                />
-                <Text
-                  style={[
-                    styles.tabLabel,
-                    isActive && styles.tabLabelActive,
-                  ]}>
-                  {tab.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+        {/* White Rounded Bottom Navigation Bar (matching attached design) */}
+        <View
+          style={[
+            styles.bottomBarShell,
+            activeTab === 'HOME' && {backgroundColor: colors.royalBlue},
+          ]}>
+          <View style={styles.bottomTabBar}>
+            {TABS.map(tab => {
+              const isActive = activeTab === tab.key;
+              return (
+                <Pressable
+                  key={tab.key}
+                  onPress={() => setActiveTab(tab.key)}
+                  style={styles.tabItem}>
+                  {renderTabIcon(tab.key, isActive)}
+                  <Text
+                    style={[
+                      styles.tabLabel,
+                      isActive && styles.tabLabelActive,
+                    ]}>
+                    {tab.label}
+                  </Text>
+                  <View
+                    style={[
+                      styles.tabUnderline,
+                      isActive && styles.tabUnderlineActive,
+                    ]}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       </SafeAreaView>
     </SafeAreaProvider>
@@ -215,33 +184,10 @@ export function MainNavigator() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: colors.surface,
-  },
-  topHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  brandTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    letterSpacing: 0.2,
-  },
-  brandSubtitle: {
-    fontSize: 11.5,
-    color: colors.textMuted,
-    marginTop: 1,
+    backgroundColor: colors.royalBlue,
   },
   errorBanner: {
     backgroundColor: colors.dangerSoft,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.dangerBorder,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xs + 2,
   },
@@ -254,38 +200,43 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  bottomBarShell: {
+    backgroundColor: colors.background,
+  },
   bottomTabBar: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    height: 66,
+    paddingTop: 6,
+    elevation: 12,
     borderTopWidth: 1,
     borderTopColor: colors.border,
-    height: 56,
   },
   tabItem: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
-  },
-  tabIndicator: {
-    position: 'absolute',
-    top: 0,
-    width: 28,
-    height: 2.5,
-    backgroundColor: 'transparent',
-    borderBottomLeftRadius: 2,
-    borderBottomRightRadius: 2,
-  },
-  tabIndicatorActive: {
-    backgroundColor: colors.accent,
+    gap: 3,
   },
   tabLabel: {
     fontSize: 11.5,
     fontWeight: '600',
-    color: colors.textMuted,
+    color: '#64748B',
   },
   tabLabelActive: {
-    color: colors.textPrimary,
+    color: colors.accent,
     fontWeight: '700',
+  },
+  tabUnderline: {
+    width: 34,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'transparent',
+    marginTop: 2,
+  },
+  tabUnderlineActive: {
+    backgroundColor: colors.accent,
   },
 });

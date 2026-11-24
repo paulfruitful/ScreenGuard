@@ -8,13 +8,13 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
 import {colors, radius, spacing, typography} from '../theme/theme';
 import {
-  InterventionBehavior,
-  MockClassifierProfile,
   ProtectionSensitivityMode,
   UserPreferences,
 } from '../types/screenguard';
+import {getFriendlyAppName} from '../utils/friendlyFormat';
 
 interface SettingsScreenProps {
   preferences: UserPreferences;
@@ -32,33 +32,20 @@ const SENSITIVITY_OPTIONS: {
   {
     label: 'Balanced (Recommended)',
     value: 'BALANCED',
-    desc: 'Displays the protective overlay on confirmed NUDITY, SEXUAL_ACTIVITY, and EXPLICIT content. Never triggers full-screen overlays on SUGGESTIVE or UNCERTAIN frames.',
+    desc: 'Blocks nudity and explicit content while avoiding false alerts on swimwear, fitness, or everyday photos.',
   },
   {
     label: 'Strict',
     value: 'STRICT',
-    desc: 'Applies tighter category thresholds for NUDITY, SEXUAL_ACTIVITY, and EXPLICIT content, and optionally covers high-confidence confirmed SUGGESTIVE content.',
+    desc: 'Provides extra caution by also blocking suggestive content and borderline scenes.',
   },
 ];
 
-const SAMPLING_OPTIONS = [
-  {label: '1.5s (Fast)', value: 1500},
-  {label: '2.0s (Balanced)', value: 2000},
-  {label: '3.0s (Standard)', value: 3000},
-  {label: '5.0s (Battery Saver)', value: 5000},
-];
-
-const THRESHOLD_OPTIONS = [
-  {label: '62%', value: 0.62},
-  {label: '72%', value: 0.72},
-  {label: '80%', value: 0.8},
-  {label: '88%', value: 0.88},
-];
-
-const CONFIRMATION_OPTIONS = [
-  {label: '2 Frames', value: 2},
-  {label: '3 Frames', value: 3},
-  {label: '4 Frames', value: 4},
+const QUICK_EXCLUDE_CANDIDATES = [
+  {pkg: 'com.whatsapp', name: 'WhatsApp'},
+  {pkg: 'com.google.android.apps.messaging', name: 'Messages'},
+  {pkg: 'com.google.android.gm', name: 'Gmail'},
+  {pkg: 'com.android.settings', name: 'Settings'},
 ];
 
 const COOLDOWN_OPTIONS = [
@@ -66,58 +53,6 @@ const COOLDOWN_OPTIONS = [
   {label: '12s', value: 12},
   {label: '15s', value: 15},
   {label: '30s', value: 30},
-];
-
-const INTERVENTION_OPTIONS: {
-  label: string;
-  value: InterventionBehavior;
-  desc: string;
-}[] = [
-  {
-    label: 'Full-Screen Protective Overlay (Milestone 3 Active Shield)',
-    value: 'PROTECTIVE_OVERLAY',
-    desc: 'Covers confirmed explicit content with Screen Guard’s touch-blocking protective overlay and offers "Return to Safe Browsing".',
-  },
-  {
-    label: 'Status Notification Alert Only',
-    value: 'STATUS_NOTIFICATION',
-    desc: 'Updates local monitoring notification when confirmed threshold is met without covering the screen.',
-  },
-  {
-    label: 'Log Only (Silent Observation)',
-    value: 'LOG_ONLY',
-    desc: 'Records confirmed multi-frame detection metadata in Activity Log without visual intervention.',
-  },
-];
-
-const MOCK_PROFILES: {
-  label: string;
-  value: MockClassifierProfile;
-  desc: string;
-}[] = [
-  {
-    label: 'Deterministic Safe',
-    value: 'DETERMINISTIC_SAFE',
-    desc: 'Computes real pixel statistics on downsampled frame; emits SAFE scores.',
-  },
-  {
-    label: 'Synthetic Variation',
-    value: 'SYNTHETIC_VARIATION',
-    desc: 'Varies scores deterministically from image luminance/warmth for pipeline testing.',
-  },
-  {
-    label: 'Multi-Frame Confirmation Stress Test',
-    value: 'STRESS_TEST_SUSPICIOUS',
-    desc: 'Simulates elevated mock scores to verify N-frame consecutive confirmation gating.',
-  },
-];
-
-const QUICK_EXCLUDE_CANDIDATES = [
-  {pkg: 'com.android.settings', name: 'Android Settings'},
-  {pkg: 'com.google.android.apps.messaging', name: 'Google Messages'},
-  {pkg: 'com.whatsapp', name: 'WhatsApp'},
-  {pkg: 'com.samsung.android.messaging', name: 'Samsung Messages'},
-  {pkg: 'com.google.android.gm', name: 'Gmail'},
 ];
 
 export function SettingsScreen({
@@ -128,6 +63,7 @@ export function SettingsScreen({
   onOpenOverlaySettings,
 }: SettingsScreenProps) {
   const [customPackage, setCustomPackage] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const addExcludedPackage = (pkg: string) => {
     const trimmed = pkg.trim().toLowerCase();
@@ -155,398 +91,244 @@ export function SettingsScreen({
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}>
-      {/* Protection Control & Permissions */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Protection & Permissions</Text>
-
-        <View style={styles.switchRow}>
-          <View style={styles.switchTextCol}>
-            <Text style={styles.rowTitle}>Screen Guard Protection</Text>
-            <Text style={styles.rowSubtitle}>
-              Observe active window transitions, classify content on-device, and
-              display protective overlays when policy violations are confirmed.
+      {/* Royal Blue Header */}
+      <View style={styles.royalHeader}>
+        <View style={styles.titleWrap}>
+          <ScreenGuardLogo size={32} />
+          <View>
+            <Text style={styles.heading}>Settings</Text>
+            <Text style={styles.subheading}>
+              Manage your protection & privacy preferences
             </Text>
           </View>
-          <Switch
-            value={preferences.protectionEnabled}
-            onValueChange={val => onToggleProtection(val)}
-            trackColor={{false: colors.borderStrong, true: colors.accent}}
-            thumbColor="#FFFFFF"
-          />
         </View>
-
-        <View style={[styles.switchRow, styles.rowBorderTop]}>
-          <View style={styles.switchTextCol}>
-            <Text style={styles.rowTitle}>
-              Prefer Per-Window Capture (Android 14+)
-            </Text>
-            <Text style={styles.rowSubtitle}>
-              Use AccessibilityService.takeScreenshotOfWindow(windowId) when
-              available before falling back to display capture.
-            </Text>
-          </View>
-          <Switch
-            value={preferences.preferWindowCapture}
-            onValueChange={val =>
-              onUpdatePreferences({preferWindowCapture: val})
-            }
-            trackColor={{false: colors.borderStrong, true: colors.accent}}
-            thumbColor="#FFFFFF"
-          />
-        </View>
-
-        <Pressable
-          onPress={onOpenAccessibilitySettings}
-          style={styles.outlineButton}>
-          <Text style={styles.outlineButtonText}>
-            Manage or Revoke Android Accessibility Access
-          </Text>
-        </Pressable>
-
-        <Pressable
-          onPress={onOpenOverlaySettings}
-          style={[styles.outlineButton, {marginTop: spacing.xs + 4}]}>
-          <Text style={styles.outlineButtonText}>
-            Manage Display Over Other Apps Permission
-          </Text>
-        </Pressable>
       </View>
 
-      {/* Milestone 3 Section 10.1: Protection Sensitivity & Overlay Policy */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>
-          Protection Sensitivity & Overlay Policy
-        </Text>
-        <Text style={styles.helperText}>
-          Choose how Screen Guard maps on-device classification categories (
-          EXPLICIT, NUDITY, SEXUAL_ACTIVITY, SUGGESTIVE, NON_EXPLICIT,
-          UNCERTAIN) to protective overlay interventions.
-        </Text>
+      <View style={styles.body}>
+        {/* 1. Protection Basics */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Protection</Text>
 
-        {SENSITIVITY_OPTIONS.map(opt => {
-          const active =
-            (preferences.sensitivityMode || 'BALANCED') === opt.value;
-          return (
-            <Pressable
-              key={opt.value}
-              onPress={() => onUpdatePreferences({sensitivityMode: opt.value})}
-              style={[styles.radioCard, active && styles.radioCardActive]}>
-              <Text style={styles.radioTitle}>{opt.label}</Text>
-              <Text style={styles.radioDesc}>{opt.desc}</Text>
-            </Pressable>
-          );
-        })}
-
-        {preferences.sensitivityMode === 'STRICT' && (
-          <View style={[styles.switchRow, styles.rowBorderTop]}>
+          <View style={styles.switchRow}>
             <View style={styles.switchTextCol}>
-              <Text style={styles.rowTitle}>
-                Cover High-Confidence Suggestive Content in Strict Mode
-              </Text>
+              <Text style={styles.rowTitle}>Screen Guard Protection</Text>
               <Text style={styles.rowSubtitle}>
-                When Strict mode is active, display the protective overlay if
-                SUGGESTIVE content exceeds 76% confidence across consecutive
-                frames.
+                Automatically hide explicit content across your apps.
               </Text>
             </View>
             <Switch
-              value={preferences.interveneOnSuggestiveInStrict}
-              onValueChange={val =>
-                onUpdatePreferences({interveneOnSuggestiveInStrict: val})
-              }
-              trackColor={{false: colors.borderStrong, true: colors.accent}}
+              value={preferences.protectionEnabled}
+              onValueChange={val => onToggleProtection(val)}
+              trackColor={{false: colors.borderStrong, true: colors.royalBlue}}
               thumbColor="#FFFFFF"
             />
           </View>
-        )}
 
-        <View style={[styles.switchRow, styles.rowBorderTop]}>
-          <View style={styles.switchTextCol}>
-            <Text style={styles.rowTitle}>
-              Allow Manual Overlay Dismissal ("Dismiss for This Screen")
-            </Text>
-            <Text style={styles.rowSubtitle}>
-              Show the secondary dismiss action on the protective overlay with a
-              temporary per-app cooldown.
-            </Text>
-          </View>
-          <Switch
-            value={preferences.allowManualDismiss}
-            onValueChange={val =>
-              onUpdatePreferences({allowManualDismiss: val})
-            }
-            trackColor={{false: colors.borderStrong, true: colors.accent}}
-            thumbColor="#FFFFFF"
-          />
-        </View>
-
-        {preferences.allowManualDismiss && (
-          <>
-            <Text style={[styles.fieldLabel, {marginTop: spacing.sm}]}>
-              Dismissal Cooldown Duration
-            </Text>
-            <View style={styles.pillGrid}>
-              {COOLDOWN_OPTIONS.map(opt => {
-                const active =
-                  (preferences.dismissCooldownSeconds || 12) === opt.value;
-                return (
-                  <Pressable
-                    key={opt.value}
-                    onPress={() =>
-                      onUpdatePreferences({dismissCooldownSeconds: opt.value})
-                    }
-                    style={[
-                      styles.choicePill,
-                      active && styles.choicePillActive,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.choicePillText,
-                        active && styles.choicePillTextActive,
-                      ]}>
-                      {opt.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+          <View style={[styles.switchRow, styles.rowBorderTop]}>
+            <View style={styles.switchTextCol}>
+              <Text style={styles.rowTitle}>
+                Allow "Dismiss for This Screen"
+              </Text>
+              <Text style={styles.rowSubtitle}>
+                Show an option on the shield to temporarily dismiss it.
+              </Text>
             </View>
-          </>
-        )}
-      </View>
+            <Switch
+              value={preferences.allowManualDismiss}
+              onValueChange={val =>
+                onUpdatePreferences({allowManualDismiss: val})
+              }
+              trackColor={{false: colors.borderStrong, true: colors.royalBlue}}
+              thumbColor="#FFFFFF"
+            />
+          </View>
 
-      {/* Sampling Frequency & Cooldown */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Screenshot Sampling Policy</Text>
-        <Text style={styles.helperText}>
-          Screen Guard uses event-driven sampling with debouncing rather than
-          continuous polling to preserve battery and respect Android’s 1-second
-          accessibility screenshot interval limit.
-        </Text>
-
-        <Text style={styles.fieldLabel}>Minimum Cooldown Between Captures</Text>
-        <View style={styles.pillGrid}>
-          {SAMPLING_OPTIONS.map(opt => {
-            const active = preferences.samplingIntervalMs === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                onPress={() =>
-                  onUpdatePreferences({samplingIntervalMs: opt.value})
-                }
-                style={[styles.choicePill, active && styles.choicePillActive]}>
-                <Text
-                  style={[
-                    styles.choicePillText,
-                    active && styles.choicePillTextActive,
-                  ]}>
-                  {opt.label}
-                </Text>
-              </Pressable>
-            );
-          })}
+          {preferences.allowManualDismiss && (
+            <View style={styles.cooldownWrap}>
+              <Text style={styles.fieldLabel}>Pause Duration After Dismiss</Text>
+              <View style={styles.pillRow}>
+                {COOLDOWN_OPTIONS.map(opt => {
+                  const active =
+                    (preferences.dismissCooldownSeconds || 12) === opt.value;
+                  return (
+                    <Pressable
+                      key={opt.value}
+                      onPress={() =>
+                        onUpdatePreferences({dismissCooldownSeconds: opt.value})
+                      }
+                      style={[styles.pill, active && styles.pillActive]}>
+                      <Text
+                        style={[
+                          styles.pillText,
+                          active && styles.pillTextActive,
+                        ]}>
+                        {opt.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          )}
         </View>
-      </View>
 
-      {/* Detection Threshold & False-Positive Reduction */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>
-          Detection Confidence & Multi-Frame Confirmation
-        </Text>
-        <Text style={styles.helperText}>
-          Category-specific thresholds are scaled from the base confidence
-          threshold below, and consecutive positive frames are required before
-          transitioning from PENDING to PROTECTED.
-        </Text>
+        {/* 2. Sensitivity Level */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Sensitivity Level</Text>
+          <Text style={styles.cardSub}>
+            Choose how strict Screen Guard should be when filtering content.
+          </Text>
 
-        <Text style={styles.fieldLabel}>Base Confidence Threshold</Text>
-        <View style={styles.pillGrid}>
-          {THRESHOLD_OPTIONS.map(opt => {
+          {SENSITIVITY_OPTIONS.map(opt => {
             const active =
-              Math.abs(preferences.confidenceThreshold - opt.value) < 0.02;
+              (preferences.sensitivityMode || 'BALANCED') === opt.value;
             return (
               <Pressable
                 key={opt.value}
-                onPress={() =>
-                  onUpdatePreferences({confidenceThreshold: opt.value})
-                }
-                style={[styles.choicePill, active && styles.choicePillActive]}>
-                <Text
-                  style={[
-                    styles.choicePillText,
-                    active && styles.choicePillTextActive,
-                  ]}>
-                  {opt.label}
-                </Text>
+                onPress={() => onUpdatePreferences({sensitivityMode: opt.value})}
+                style={[styles.radioCard, active && styles.radioCardActive]}>
+                <View style={styles.radioTop}>
+                  <Text
+                    style={[
+                      styles.radioTitle,
+                      active && {color: colors.royalBlue},
+                    ]}>
+                    {opt.label}
+                  </Text>
+                  <View
+                    style={[
+                      styles.radioDotOuter,
+                      active && styles.radioDotOuterActive,
+                    ]}>
+                    {active && <View style={styles.radioDotInner} />}
+                  </View>
+                </View>
+                <Text style={styles.radioDesc}>{opt.desc}</Text>
               </Pressable>
             );
           })}
         </View>
 
-        <Text style={[styles.fieldLabel, {marginTop: spacing.md}]}>
-          Consecutive Frames Required for Confirmation
-        </Text>
-        <View style={styles.pillGrid}>
-          {CONFIRMATION_OPTIONS.map(opt => {
-            const active = preferences.confirmationFramesRequired === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                onPress={() =>
-                  onUpdatePreferences({confirmationFramesRequired: opt.value})
-                }
-                style={[styles.choicePill, active && styles.choicePillActive]}>
-                <Text
-                  style={[
-                    styles.choicePillText,
-                    active && styles.choicePillTextActive,
-                  ]}>
-                  {opt.label}
+        {/* 3. Trusted / Excluded Apps */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Trusted Apps (Excluded)</Text>
+          <Text style={styles.cardSub}>
+            Screen Guard will never check or cover apps you add here.
+          </Text>
+
+          <View style={styles.chipWrap}>
+            {preferences.excludedPackages.map(pkg => (
+              <View key={pkg} style={styles.pkgChip}>
+                <Text style={styles.pkgChipText}>
+                  {getFriendlyAppName(pkg)}
                 </Text>
-              </Pressable>
-            );
-          })}
+                <Pressable
+                  onPress={() => removeExcludedPackage(pkg)}
+                  hitSlop={8}>
+                  <Text style={styles.pkgChipRemove}>✕</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+
+          <Text style={[styles.fieldLabel, {marginTop: spacing.md}]}>
+            Quick Add
+          </Text>
+          <View style={styles.chipWrap}>
+            {QUICK_EXCLUDE_CANDIDATES.map(item => {
+              const already = preferences.excludedPackages.includes(item.pkg);
+              return (
+                <Pressable
+                  key={item.pkg}
+                  disabled={already}
+                  onPress={() => addExcludedPackage(item.pkg)}
+                  style={[styles.quickChip, already && {opacity: 0.45}]}>
+                  <Text style={styles.quickChipText}>
+                    {already ? `✓ ${item.name}` : `+ ${item.name}`}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={[styles.inputRow, {marginTop: spacing.md}]}>
+            <TextInput
+              value={customPackage}
+              onChangeText={setCustomPackage}
+              placeholder="Add app package (e.g. com.whatsapp)"
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.textInput}
+            />
+            <Pressable
+              onPress={() => addExcludedPackage(customPackage)}
+              style={styles.addBtn}>
+              <Text style={styles.addBtnText}>Add</Text>
+            </Pressable>
+          </View>
         </View>
-      </View>
 
-      {/* Intervention Behavior & Mock Classifier Profile */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Intervention Mode</Text>
-        {INTERVENTION_OPTIONS.map(opt => {
-          const active = preferences.interventionBehavior === opt.value;
-          return (
-            <Pressable
-              key={opt.value}
-              onPress={() =>
-                onUpdatePreferences({interventionBehavior: opt.value})
-              }
-              style={[styles.radioCard, active && styles.radioCardActive]}>
-              <Text style={styles.radioTitle}>{opt.label}</Text>
-              <Text style={styles.radioDesc}>{opt.desc}</Text>
-            </Pressable>
-          );
-        })}
+        {/* 4. Permissions & Privacy Promise */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Permissions & Privacy</Text>
+          <Text style={styles.cardSub}>
+            100% Private on Your Device. Screen Guard checks your screen locally
+            and never saves screenshots or uploads anything.
+          </Text>
 
-        <Text
-          style={[
-            styles.sectionTitle,
-            {marginTop: spacing.lg, marginBottom: spacing.xs},
-          ]}>
-          Fallback Simulation Profile (Dev / Testing)
-        </Text>
-        {MOCK_PROFILES.map(opt => {
-          const active = preferences.mockClassifierProfile === opt.value;
-          return (
-            <Pressable
-              key={opt.value}
-              onPress={() =>
-                onUpdatePreferences({mockClassifierProfile: opt.value})
-              }
-              style={[styles.radioCard, active && styles.radioCardActive]}>
-              <Text style={styles.radioTitle}>{opt.label}</Text>
-              <Text style={styles.radioDesc}>{opt.desc}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {/* Excluded Applications */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>Excluded Applications</Text>
-        <Text style={styles.helperText}>
-          Screen Guard will never request screenshots or display protective
-          overlays when an excluded package is in the foreground.
-        </Text>
-
-        <View style={styles.inputRow}>
-          <TextInput
-            value={customPackage}
-            onChangeText={setCustomPackage}
-            placeholder="e.g. com.whatsapp"
-            placeholderTextColor={colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            style={styles.textInput}
-          />
           <Pressable
-            onPress={() => addExcludedPackage(customPackage)}
-            style={styles.addBtn}>
-            <Text style={styles.addBtnText}>Add</Text>
+            onPress={onOpenAccessibilitySettings}
+            style={styles.outlineBtn}>
+            <Text style={styles.outlineBtnText}>
+              Manage Accessibility Access
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={onOpenOverlaySettings}
+            style={[styles.outlineBtn, {marginTop: spacing.sm}]}>
+            <Text style={styles.outlineBtnText}>
+              Manage Display Over Other Apps
+            </Text>
           </Pressable>
         </View>
 
-        <View style={styles.chipWrap}>
-          {preferences.excludedPackages.map(pkg => (
-            <View key={pkg} style={styles.pkgChip}>
-              <Text style={styles.pkgChipText}>{pkg}</Text>
-              <Pressable
-                onPress={() => removeExcludedPackage(pkg)}
-                hitSlop={8}>
-                <Text style={styles.pkgChipRemove}>✕</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
+        {/* 5. Optional Advanced Options */}
+        <Pressable
+          onPress={() => setShowAdvanced(prev => !prev)}
+          style={styles.advancedToggle}>
+          <Text style={styles.advancedToggleText}>
+            {showAdvanced
+              ? 'Hide Advanced Options ▲'
+              : 'Show Advanced Options ▼'}
+          </Text>
+        </Pressable>
 
-        <Text style={[styles.fieldLabel, {marginTop: spacing.md}]}>
-          Quick-Exclude Common Personal Apps
-        </Text>
-        <View style={styles.chipWrap}>
-          {QUICK_EXCLUDE_CANDIDATES.map(item => {
-            const already = preferences.excludedPackages.includes(item.pkg);
-            return (
-              <Pressable
-                key={item.pkg}
-                disabled={already}
-                onPress={() => addExcludedPackage(item.pkg)}
-                style={[
-                  styles.quickAddChip,
-                  already && styles.quickAddChipDisabled,
-                ]}>
-                <Text style={styles.quickAddText}>
-                  {already ? `✓ ${item.name}` : `+ ${item.name}`}
+        {showAdvanced && (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Advanced Options</Text>
+            <View style={styles.switchRow}>
+              <View style={styles.switchTextCol}>
+                <Text style={styles.rowTitle}>Per-Window Capture</Text>
+                <Text style={styles.rowSubtitle}>
+                  Prefer Android 14+ window-level capture when available.
                 </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-
-      {/* Transparency: What Screen Guard Can and Cannot Inspect */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>
-          Transparency: What Screen Guard Can & Cannot Inspect
-        </Text>
-
-        <View style={styles.infoBlock}>
-          <Text style={styles.infoHeading}>What Screen Guard Can Inspect</Text>
-          <Text style={styles.infoBody}>
-            • Standard foreground application surfaces on Android 11+ via
-            AccessibilityService.takeScreenshot() and Android 14+ via
-            AccessibilityService.takeScreenshotOfWindow().{'\n'}• Browser pages
-            (normal tabs), social media feeds (Instagram, TikTok, X, Facebook,
-            YouTube), and non-DRM video surfaces after debounced
-            window/content/scroll settles.
-          </Text>
-        </View>
-
-        <View style={styles.infoBlock}>
-          <Text style={styles.infoHeading}>
-            What Screen Guard Cannot & Will Not Inspect
-          </Text>
-          <Text style={styles.infoBody}>
-            • Protected Windows (FLAG_SECURE): Banking apps, password managers,
-            Chrome Incognito tabs, and private messaging screens that set
-            FLAG_SECURE return ERROR_TAKE_SCREENSHOT_SECURE_WINDOW. Screen Guard
-            never attempts to bypass FLAG_SECURE.{'\n'}• DRM-Protected Video:
-            Widevine L1 hardware-protected video overlays cannot be read by
-            accessibility screenshot APIs.{'\n'}• Passwords & Typed Text: Screen
-            Guard does not subscribe to text-input events, ignores password
-            nodes, and never reads clipboard or private messages.{'\n'}• Zero
-            Disk or Cloud Persistence: Screenshots are downsampled in RAM,
-            HardwareBuffers are closed immediately, and images are never saved
-            to storage, uploaded, or shown as thumbnails on the overlay.
-          </Text>
-        </View>
+              </View>
+              <Switch
+                value={preferences.preferWindowCapture}
+                onValueChange={val =>
+                  onUpdatePreferences({preferWindowCapture: val})
+                }
+                trackColor={{
+                  false: colors.borderStrong,
+                  true: colors.royalBlue,
+                }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -558,29 +340,52 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   content: {
-    padding: spacing.lg,
     paddingBottom: spacing.xxl + 16,
   },
-  sectionCard: {
+  royalHeader: {
+    backgroundColor: colors.royalBlue,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.lg,
+    borderBottomLeftRadius: radius.xl,
+    borderBottomRightRadius: radius.xl,
+  },
+  titleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
+  },
+  heading: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textOnBlue,
+  },
+  subheading: {
+    fontSize: 12,
+    color: colors.textOnBlueMuted,
+    marginTop: 1,
+  },
+  body: {
+    padding: spacing.lg,
+  },
+  card: {
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.lg,
     marginBottom: spacing.md,
   },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: spacing.sm,
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 4,
   },
-  helperText: {
-    fontSize: 12.5,
+  cardSub: {
+    fontSize: 13,
     color: colors.textSecondary,
-    lineHeight: 18,
+    lineHeight: 19,
     marginBottom: spacing.md,
   },
   switchRow: {
@@ -601,111 +406,96 @@ const styles = StyleSheet.create({
   },
   rowTitle: {
     fontSize: 14.5,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.textPrimary,
     marginBottom: 2,
   },
   rowSubtitle: {
-    fontSize: 12,
+    fontSize: 12.5,
     color: colors.textSecondary,
     lineHeight: 17,
   },
-  outlineButton: {
-    marginTop: spacing.md,
-    paddingVertical: 11,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    backgroundColor: colors.surfaceSubtle,
-    alignItems: 'center',
-  },
-  outlineButtonText: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: colors.textPrimary,
+  cooldownWrap: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
   },
   fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
     color: colors.textSecondary,
     marginBottom: spacing.sm,
   },
-  pillGrid: {
+  pillRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: spacing.sm,
   },
-  choicePill: {
-    paddingHorizontal: spacing.md,
+  pill: {
+    paddingHorizontal: 14,
     paddingVertical: 8,
-    borderRadius: radius.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceSubtle,
     borderWidth: 1,
     borderColor: colors.border,
-    backgroundColor: colors.surfaceSubtle,
   },
-  choicePillActive: {
-    borderColor: colors.accentBorder,
-    backgroundColor: colors.accentSoft,
+  pillActive: {
+    backgroundColor: colors.royalBlue,
+    borderColor: colors.royalBlue,
   },
-  choicePillText: {
+  pillText: {
     fontSize: 12.5,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.textSecondary,
   },
-  choicePillTextActive: {
-    color: '#60A5FA',
+  pillTextActive: {
+    color: '#FFFFFF',
   },
   radioCard: {
     padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
+    borderRadius: radius.lg,
+    borderWidth: 1.5,
     borderColor: colors.border,
     backgroundColor: colors.surfaceSubtle,
     marginBottom: spacing.sm,
   },
   radioCardActive: {
-    borderColor: colors.accentBorder,
-    backgroundColor: colors.accentSoft,
+    borderColor: colors.royalBlue,
+    backgroundColor: 'rgba(12, 45, 132, 0.05)',
+  },
+  radioTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   radioTitle: {
-    fontSize: 13.5,
-    fontWeight: '700',
+    fontSize: 14.5,
+    fontWeight: '800',
     color: colors.textPrimary,
-    marginBottom: 2,
+  },
+  radioDotOuter: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioDotOuterActive: {
+    borderColor: colors.royalBlue,
+  },
+  radioDotInner: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: colors.royalBlue,
   },
   radioDesc: {
-    fontSize: 12,
+    fontSize: 12.5,
     color: colors.textSecondary,
-    lineHeight: 17,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-    color: colors.textPrimary,
-    fontSize: 13,
-    fontFamily: typography.mono,
-  },
-  addBtn: {
-    backgroundColor: colors.accent,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  addBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
+    lineHeight: 18,
   },
   chipWrap: {
     flexDirection: 'row',
@@ -715,52 +505,85 @@ const styles = StyleSheet.create({
   pkgChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: radius.sm,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.pill,
     borderWidth: 1,
-    borderColor: colors.borderStrong,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    borderColor: colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     gap: 8,
   },
   pkgChipText: {
-    fontSize: 11.5,
+    fontSize: 12.5,
+    fontWeight: '600',
     color: colors.textPrimary,
-    fontFamily: typography.mono,
   },
   pkgChipRemove: {
     fontSize: 12,
     color: colors.danger,
     fontWeight: '700',
   },
-  quickAddChip: {
+  quickChip: {
     backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.sm,
+    borderRadius: radius.pill,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
     paddingVertical: 6,
   },
-  quickAddChipDisabled: {
-    opacity: 0.45,
-  },
-  quickAddText: {
-    fontSize: 11.5,
-    color: colors.textSecondary,
+  quickChipText: {
+    fontSize: 12,
     fontWeight: '600',
+    color: colors.royalBlue,
   },
-  infoBlock: {
-    marginBottom: spacing.md,
+  inputRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
-  infoHeading: {
+  textInput: {
+    flex: 1,
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 9,
+    color: colors.textPrimary,
+    fontSize: 12.5,
+    fontFamily: typography.mono,
+  },
+  addBtn: {
+    backgroundColor: colors.royalBlue,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  outlineBtn: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  outlineBtnText: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 4,
+    color: colors.royalBlue,
   },
-  infoBody: {
+  advancedToggle: {
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  advancedToggleText: {
     fontSize: 12.5,
+    fontWeight: '700',
     color: colors.textSecondary,
-    lineHeight: 19,
   },
 });

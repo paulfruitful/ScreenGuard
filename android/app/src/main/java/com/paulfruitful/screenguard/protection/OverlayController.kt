@@ -241,7 +241,7 @@ class ScreenGuardOverlayController(
                 return false
             }
         }.apply {
-            setBackgroundColor(Color.parseColor("#FA0B0F14"))
+            setBackgroundColor(Color.parseColor("#FA0C2D84"))
             isClickable = true
             isFocusable = false
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
@@ -254,38 +254,36 @@ class ScreenGuardOverlayController(
             gravity = Gravity.CENTER_HORIZONTAL
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(context, 16f)
-                setColor(Color.parseColor("#121820"))
-                setStroke(dpInt(context, 1f), Color.parseColor("#2D3A4B"))
+                cornerRadius = dp(context, 24f)
+                setColor(Color.parseColor("#FFFFFF"))
+                setStroke(dpInt(context, 1f), Color.parseColor("#E2E8F4"))
             }
             val padH = dpInt(context, 24f)
             val padV = dpInt(context, 28f)
             setPadding(padH, padV, padH, padV)
         }
 
-        // 1. Custom Vector Shield Logo View
+        // 1. Custom Vector Shield with Cross Logo View
         val shieldLogo = ShieldEmblemView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(dpInt(context, 56f), dpInt(context, 56f)).apply {
+            layoutParams = LinearLayout.LayoutParams(dpInt(context, 68f), dpInt(context, 68f)).apply {
                 bottomMargin = dpInt(context, 14f)
             }
         }
         card.addView(shieldLogo)
 
-        // 2. State / Brand Pill
+        // 2. Clean Green Status Pill
         val badge = TextView(context).apply {
-            text = "SCREEN GUARD PROTECTION"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            setTextColor(Color.parseColor("#60A5FA"))
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
-            letterSpacing = 0.08f
+            text = "✓  Screen Guard Protected"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            setTextColor(Color.parseColor("#FFFFFF"))
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(context, 999f)
-                setColor(Color.parseColor("#1D283A"))
-                setStroke(dpInt(context, 1f), Color.parseColor("#3B82F6"))
+                setColor(Color.parseColor("#1BB55C"))
             }
-            setPadding(dpInt(context, 12f), dpInt(context, 5f), dpInt(context, 12f), dpInt(context, 5f))
+            setPadding(dpInt(context, 14f), dpInt(context, 6f), dpInt(context, 14f), dpInt(context, 6f))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -296,11 +294,11 @@ class ScreenGuardOverlayController(
         stateBadgeText = badge
         card.addView(badge)
 
-        // 3. Required Heading: "Content hidden for your protection." (Section 4.1)
+        // 3. Required Heading: "Content hidden for your protection."
         val heading = TextView(context).apply {
             text = "Content hidden for your protection."
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-            setTextColor(Color.parseColor("#F3F6FA"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 21f)
+            setTextColor(Color.parseColor("#0F1F4B"))
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
@@ -316,8 +314,8 @@ class ScreenGuardOverlayController(
         // 4. Required Supporting Text: "Screen Guard detected content that matches your protection settings."
         val supporting = TextView(context).apply {
             text = "Screen Guard detected content that matches your protection settings."
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-            setTextColor(Color.parseColor("#9BA8B8"))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+            setTextColor(Color.parseColor("#5B6B8C"))
             gravity = Gravity.CENTER
             setLineSpacing(dp(context, 3f), 1.0f)
             layoutParams = LinearLayout.LayoutParams(
@@ -330,21 +328,20 @@ class ScreenGuardOverlayController(
         supportingText = supporting
         card.addView(supporting)
 
-        // 5. Minimal Metadata Context Chip (Never displays thumbnails or screenshots)
+        // 5. Friendly Context Pill (Never displays thumbnails or technical scores)
         val meta = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-            setTextColor(Color.parseColor("#64748B"))
-            typeface = Typeface.MONOSPACE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextColor(Color.parseColor("#0C2D84"))
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(context, 8f)
-                setColor(Color.parseColor("#0E141B"))
-                setStroke(dpInt(context, 1f), Color.parseColor("#1F2937"))
+                cornerRadius = dp(context, 999f)
+                setColor(Color.parseColor("#EEF3FA"))
             }
-            setPadding(dpInt(context, 12f), dpInt(context, 8f), dpInt(context, 12f), dpInt(context, 8f))
+            setPadding(dpInt(context, 14f), dpInt(context, 7f), dpInt(context, 14f), dpInt(context, 7f))
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 bottomMargin = dpInt(context, 22f)
@@ -353,21 +350,21 @@ class ScreenGuardOverlayController(
         detailMetaText = meta
         card.addView(meta)
 
-        // 6. Primary Action: "Return to Safe Browsing"
+        // 6. Primary Action: Gold Pill "Return to Safe Browsing"
         val primaryBtn = TextView(context).apply {
             text = "Return to Safe Browsing"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+            setTextColor(Color.parseColor("#0A1D4E"))
             typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(context, 10f)
-                setColor(Color.parseColor("#2563EB"))
+                cornerRadius = dp(context, 999f)
+                setColor(Color.parseColor("#F5B82E"))
             }
-            setPadding(dpInt(context, 18f), dpInt(context, 14f), dpInt(context, 18f), dpInt(context, 14f))
+            setPadding(dpInt(context, 20f), dpInt(context, 15f), dpInt(context, 20f), dpInt(context, 15f))
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -384,17 +381,17 @@ class ScreenGuardOverlayController(
         // 7. Optional Dismiss Action (subject to active protection policy)
         val dismissBtn = TextView(context).apply {
             text = "Dismiss for This Screen"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(Color.parseColor("#9BA8B8"))
-            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextColor(Color.parseColor("#5B6B8C"))
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             gravity = Gravity.CENTER
             isClickable = true
             isFocusable = true
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
-                cornerRadius = dp(context, 10f)
-                setColor(Color.parseColor("#171F2A"))
-                setStroke(dpInt(context, 1f), Color.parseColor("#2D3A4B"))
+                cornerRadius = dp(context, 999f)
+                setColor(Color.parseColor("#F4F7FC"))
+                setStroke(dpInt(context, 1f), Color.parseColor("#E2E8F4"))
             }
             setPadding(dpInt(context, 16f), dpInt(context, 12f), dpInt(context, 16f), dpInt(context, 12f))
             layoutParams = LinearLayout.LayoutParams(
@@ -422,9 +419,9 @@ class ScreenGuardOverlayController(
 
     private fun bindReasonToViews(reason: ProtectionReason) {
         val stateLabel = if (reason.overlayState == OverlayState.RECOVERING) {
-            "SCREEN GUARD · VERIFYING RECOVERY"
+            "✓  Checking Screen Safety"
         } else {
-            "SCREEN GUARD · ${reason.sensitivityMode.name} POLICY"
+            "✓  Screen Guard Protected"
         }
         stateBadgeText?.text = stateLabel
         headingText?.text = "Content hidden for your protection."
@@ -432,9 +429,7 @@ class ScreenGuardOverlayController(
             "Screen Guard detected content that matches your protection settings."
 
         val appName = reason.appLabel.ifBlank { reason.packageName }
-        val confPct = "%.0f".format(reason.confidence * 100f)
-        detailMetaText?.text =
-            "App: $appName\nPolicy Match: ${reason.triggerCategory} ($confPct% confidence)"
+        detailMetaText?.text = "Protected in $appName"
 
         secondaryDismissButton?.visibility = if (reason.allowManualDismiss) {
             View.VISIBLE
@@ -462,27 +457,26 @@ class ScreenGuardOverlayController(
     private fun dpInt(context: Context, value: Float): Int = dp(context, value).toInt()
 
     /**
-     * Minimal custom vector shield emblem drawn directly on Canvas (no external bitmap dependencies).
+     * Custom vector Shield with Cross emblem drawn directly on Canvas (matches Screen Guard brand logo).
      */
     private class ShieldEmblemView(context: Context) : View(context) {
         private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = Color.parseColor("#1E3A8A")
+            color = Color.parseColor("#0C2D84")
         }
         private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
-            strokeWidth = 5f
-            color = Color.parseColor("#3B82F6")
-        }
-        private val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = 6f
-            strokeCap = Paint.Cap.ROUND
+            strokeWidth = 7f
             strokeJoin = Paint.Join.ROUND
-            color = Color.parseColor("#F3F6FA")
+            color = Color.parseColor("#F5B82E")
+        }
+        private val crossPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 10f
+            strokeCap = Paint.Cap.ROUND
+            color = Color.parseColor("#FFFFFF")
         }
         private val shieldPath = Path()
-        private val checkPath = Path()
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -492,21 +486,21 @@ class ScreenGuardOverlayController(
 
             shieldPath.reset()
             shieldPath.moveTo(w * 0.50f, h * 0.08f)
-            shieldPath.lineTo(w * 0.86f, h * 0.22f)
-            shieldPath.lineTo(w * 0.86f, h * 0.52f)
-            shieldPath.quadTo(w * 0.86f, h * 0.80f, w * 0.50f, h * 0.94f)
-            shieldPath.quadTo(w * 0.14f, h * 0.80f, w * 0.14f, h * 0.52f)
-            shieldPath.lineTo(w * 0.14f, h * 0.22f)
+            shieldPath.lineTo(w * 0.85f, h * 0.21f)
+            shieldPath.lineTo(w * 0.85f, h * 0.50f)
+            shieldPath.quadTo(w * 0.85f, h * 0.78f, w * 0.50f, h * 0.93f)
+            shieldPath.quadTo(w * 0.15f, h * 0.78f, w * 0.15f, h * 0.50f)
+            shieldPath.lineTo(w * 0.15f, h * 0.21f)
             shieldPath.close()
 
             canvas.drawPath(shieldPath, fillPaint)
             canvas.drawPath(shieldPath, strokePaint)
 
-            checkPath.reset()
-            checkPath.moveTo(w * 0.36f, h * 0.52f)
-            checkPath.lineTo(w * 0.46f, h * 0.62f)
-            checkPath.lineTo(w * 0.66f, h * 0.40f)
-            canvas.drawPath(checkPath, checkPaint)
+            val cx = w * 0.50f
+            val cy = h * 0.49f
+            val arm = w * 0.16f
+            canvas.drawLine(cx, cy - arm, cx, cy + arm, crossPaint)
+            canvas.drawLine(cx - arm, cy, cx + arm, cy, crossPaint)
         }
     }
 }

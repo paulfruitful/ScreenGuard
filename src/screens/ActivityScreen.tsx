@@ -8,8 +8,9 @@ import {
   View,
 } from 'react-native';
 import {ActivityEventRow} from '../components/ActivityEventRow';
+import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
 import {colors, radius, spacing} from '../theme/theme';
-import {ActivityEventType, ActivityLogEntry} from '../types/screenguard';
+import {ActivityLogEntry} from '../types/screenguard';
 
 interface ActivityScreenProps {
   logs: ActivityLogEntry[];
@@ -17,15 +18,13 @@ interface ActivityScreenProps {
   onRefresh: () => void;
 }
 
-type FilterOption = 'ALL' | ActivityEventType;
+type SimpleFilter = 'ALL' | 'BLOCKED' | 'CHECKS' | 'APPS';
 
-const FILTERS: {key: FilterOption; label: string}[] = [
-  {key: 'ALL', label: 'All Events'},
-  {key: 'APP_DETECTED', label: 'App Detected'},
-  {key: 'SCREENSHOT_SUCCESS', label: 'Capture OK'},
-  {key: 'SCREENSHOT_FAILURE', label: 'Capture Failed'},
-  {key: 'CLASSIFICATION_COMPLETED', label: 'Classification'},
-  {key: 'SUSPICIOUS_DETECTED', label: 'Suspicious'},
+const FILTERS: {key: SimpleFilter; label: string}[] = [
+  {key: 'ALL', label: 'All Activity'},
+  {key: 'BLOCKED', label: 'Blocked'},
+  {key: 'CHECKS', label: 'Screen Checks'},
+  {key: 'APPS', label: 'Apps'},
 ];
 
 export function ActivityScreen({
@@ -33,35 +32,45 @@ export function ActivityScreen({
   onClearLogs,
   onRefresh,
 }: ActivityScreenProps) {
-  const [selectedFilter, setSelectedFilter] = useState<FilterOption>('ALL');
+  const [selectedFilter, setSelectedFilter] = useState<SimpleFilter>('ALL');
 
   const filteredLogs = useMemo(() => {
-    if (selectedFilter === 'ALL') {
-      return logs;
+    switch (selectedFilter) {
+      case 'BLOCKED':
+        return logs.filter(item => item.type === 'SUSPICIOUS_DETECTED');
+      case 'CHECKS':
+        return logs.filter(
+          item =>
+            item.type === 'SCREENSHOT_SUCCESS' ||
+            item.type === 'CLASSIFICATION_COMPLETED',
+        );
+      case 'APPS':
+        return logs.filter(item => item.type === 'APP_DETECTED');
+      case 'ALL':
+      default:
+        return logs;
     }
-    return logs.filter(item => item.type === selectedFilter);
   }, [logs, selectedFilter]);
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerBlock}>
+      <View style={styles.royalHeader}>
         <View style={styles.headerTopRow}>
-          <View>
-            <Text style={styles.heading}>Activity History</Text>
-            <Text style={styles.subheading}>
-              Metadata-only log · Zero screenshot images stored to disk
-            </Text>
+          <View style={styles.titleWrap}>
+            <ScreenGuardLogo size={32} />
+            <View>
+              <Text style={styles.heading}>Activity</Text>
+              <Text style={styles.subheading}>
+                Private, on-device protection log
+              </Text>
+            </View>
           </View>
           <View style={styles.actionGroup}>
-            <Pressable onPress={onRefresh} style={styles.actionBtn}>
-              <Text style={styles.actionBtnText}>Refresh</Text>
+            <Pressable onPress={onRefresh} style={styles.headerBtn}>
+              <Text style={styles.headerBtnText}>Refresh</Text>
             </Pressable>
-            <Pressable
-              onPress={onClearLogs}
-              style={[styles.actionBtn, styles.clearBtn]}>
-              <Text style={[styles.actionBtnText, {color: colors.danger}]}>
-                Clear
-              </Text>
+            <Pressable onPress={onClearLogs} style={styles.headerClearBtn}>
+              <Text style={styles.headerClearText}>Clear</Text>
             </Pressable>
           </View>
         </View>
@@ -97,11 +106,10 @@ export function ActivityScreen({
         renderItem={({item}) => <ActivityEventRow entry={item} />}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
-            <Text style={styles.emptyTitle}>No activity events recorded</Text>
+            <Text style={styles.emptyTitle}>No activity yet</Text>
             <Text style={styles.emptySubtitle}>
-              When Screen Guard is enabled in Android Accessibility Settings,
-              foreground application changes, screenshot capture durations, and
-              classification metadata appear chronologically here.
+              When Screen Guard is active, blocked content and protected app
+              checks will appear here. No screenshots are ever saved.
             </Text>
           </View>
         }
@@ -115,75 +123,81 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  headerBlock: {
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+  royalHeader: {
+    backgroundColor: colors.royalBlue,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.md,
+    borderBottomLeftRadius: radius.xl,
+    borderBottomRightRadius: radius.xl,
   },
   headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  titleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
   },
   heading: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textOnBlue,
   },
   subheading: {
-    fontSize: 11.5,
-    color: colors.textMuted,
-    marginTop: 2,
+    fontSize: 12,
+    color: colors.textOnBlueMuted,
+    marginTop: 1,
   },
   actionGroup: {
     flexDirection: 'row',
     gap: spacing.xs + 2,
   },
-  actionBtn: {
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 6,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
+  headerBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: colors.royalBlueGlass,
   },
-  clearBtn: {
-    borderColor: colors.dangerBorder,
-    backgroundColor: colors.dangerSoft,
-  },
-  actionBtnText: {
+  headerBtnText: {
     fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  headerClearBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+    backgroundColor: 'rgba(229, 57, 53, 0.22)',
+  },
+  headerClearText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFD4D3',
   },
   filterBar: {
     paddingHorizontal: spacing.lg,
     gap: spacing.xs + 2,
-    paddingVertical: 4,
   },
   filterPill: {
-    paddingHorizontal: spacing.sm + 4,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
     borderRadius: radius.pill,
-    backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.royalBlueGlass,
   },
   filterPillActive: {
-    backgroundColor: colors.accentSoft,
-    borderColor: colors.accentBorder,
+    backgroundColor: colors.gold,
   },
   filterPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   filterPillTextActive: {
-    color: '#60A5FA',
+    color: colors.goldText,
   },
   listContent: {
     padding: spacing.lg,
@@ -191,7 +205,7 @@ const styles = StyleSheet.create({
   },
   emptyBox: {
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
+    borderRadius: radius.xl,
     borderWidth: 1,
     borderColor: colors.border,
     padding: spacing.xl,
@@ -199,15 +213,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyTitle: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
     color: colors.textPrimary,
     marginBottom: spacing.xs,
   },
   emptySubtitle: {
-    fontSize: 13,
+    fontSize: 13.5,
     color: colors.textSecondary,
     textAlign: 'center',
-    lineHeight: 19,
+    lineHeight: 20,
   },
 });

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useMemo} from 'react';
 import {
   Pressable,
   ScrollView,
@@ -6,73 +6,98 @@ import {
   Text,
   View,
 } from 'react-native';
-import {MetricRow} from '../components/MetricRow';
-import {StatusBadge} from '../components/StatusBadge';
-import {colors, radius, spacing, typography} from '../theme/theme';
+import {ActivityEventRow} from '../components/ActivityEventRow';
 import {
+  BarsIcon,
+  ClockIcon,
+  PauseBarsIcon,
+  PlayTriangleIcon,
+  PulseIcon,
+  SettingsGearIcon,
+  ShieldCheckIcon,
+} from '../components/AppIcons';
+import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
+import {colors, radius, spacing} from '../theme/theme';
+import {
+  ActivityLogEntry,
   MonitoringStatus,
-  ProtectionActivitySummary,
-  ProtectionSensitivityMode,
   UserPreferences,
 } from '../types/screenguard';
 
 interface DashboardScreenProps {
   status: MonitoringStatus;
   preferences: UserPreferences;
+  activityLogs: ActivityLogEntry[];
   onOpenAccessibilitySettings: () => void;
-  onOpenOverlaySettings: () => void;
   onToggleProtection: (enabled: boolean) => void;
-  onUpdatePreferences: (partial: Partial<UserPreferences>) => Promise<void>;
-  onTriggerOverlayTest: (
-    category?: string,
-    delayMs?: number,
-    autoHideDurationMs?: number,
-  ) => Promise<ProtectionActivitySummary | null>;
-  onDismissOverlay: () => Promise<ProtectionActivitySummary | null>;
-  onNavigateToTesting: () => void;
-  onNavigateToClassifier: () => void;
+  onNavigateToActivity: () => void;
+  onNavigateToSettings: () => void;
   onRefresh: () => void;
 }
 
 export function DashboardScreen({
   status,
   preferences,
+  activityLogs,
   onOpenAccessibilitySettings,
-  onOpenOverlaySettings,
   onToggleProtection,
-  onUpdatePreferences,
-  onTriggerOverlayTest,
-  onDismissOverlay,
-  onNavigateToTesting,
-  onNavigateToClassifier,
+  onNavigateToActivity,
+  onNavigateToSettings,
   onRefresh,
 }: DashboardScreenProps) {
   const permissionGranted = status.accessibilityPermissionGranted;
-  const overlayPermissionGranted = status.overlayPermissionGranted;
   const serviceActive = permissionGranted && status.serviceConnected;
   const monitoringActive = serviceActive && status.protectionEnabled;
-  const overlayEngineReady = serviceActive || overlayPermissionGranted;
 
-  const summary = status.protectionSummary || {
-    overlayState: 'HIDDEN',
-    overlayVisible: false,
-    activeProtectedPackage: 'None',
-    activeProtectedAppLabel: 'None',
-    activeTriggerCategory: 'NONE',
-    activeConfidence: 0,
-    sensitivityMode: preferences.sensitivityMode || 'BALANCED',
-    totalProtectionEvents: status.totalConfirmedInterventions || 0,
-    protectedAppsCount: 0,
-    protectedPackageNames: [],
-    totalDismissals: 0,
-    totalReturnToSafetyClicks: 0,
-    totalAutoRecoveries: 0,
-    cooldownRemainingMs: 0,
-    lastOverlayError: 'NONE',
-  };
+  const summary = status.protectionSummary;
+  const itemsBlocked =
+    (summary?.totalProtectionEvents || 0) +
+    (status.totalConfirmedInterventions || 0);
 
-  const activeSensitivity: ProtectionSensitivityMode =
-    preferences.sensitivityMode === 'STRICT' ? 'STRICT' : 'BALANCED';
+  const timeProtectedLabel = useMemo(() => {
+    if (!monitoringActive) {
+      return 'Paused';
+    }
+    const timestamps = activityLogs
+      .map(l => l.timestamp)
+      .filter(t => typeof t === 'number' && t > 0);
+    if (timestamps.length === 0) {
+      return 'Active';
+    }
+    const oldest = Math.min(...timestamps);
+    const diffMins = Math.max(1, Math.floor((Date.now() - oldest) / 60000));
+    if (diffMins < 60) {
+      return `${diffMins}m`;
+    }
+    const hrs = Math.floor(diffMins / 60);
+    const mins = diffMins % 60;
+    return `${hrs}h ${mins}m`;
+  }, [activityLogs, monitoringActive]);
+
+  const protectionRateLabel = useMemo(() => {
+    const total = status.totalFramesClassified || 0;
+    if (total === 0) {
+      return monitoringActive ? '100%' : '--';
+    }
+    const uncertain = status.uncertainClassifications || 0;
+    const rate = Math.max(0, Math.min(100, ((total - uncertain) / total) * 100));
+    return `${rate.toFixed(1)}%`;
+  }, [
+    monitoringActive,
+    status.totalFramesClassified,
+    status.uncertainClassifications,
+  ]);
+
+  const recentItems = useMemo(() => {
+    const interesting = activityLogs.filter(
+      item =>
+        item.type === 'SUSPICIOUS_DETECTED' ||
+        item.type === 'SCREENSHOT_SUCCESS' ||
+        item.type === 'APP_DETECTED',
+    );
+    const source = interesting.length > 0 ? interesting : activityLogs;
+    return source.slice(0, 3);
+  }, [activityLogs]);
 
   const handlePrimaryAction = () => {
     if (!permissionGranted) {
@@ -82,610 +107,177 @@ export function DashboardScreen({
     onToggleProtection(!status.protectionEnabled);
   };
 
-  const latest = status.latestClassification;
-
-  const getOverlayStateTone = (
-    state: string,
-  ): 'success' | 'warning' | 'danger' | 'accent' | 'neutral' => {
-    switch (state) {
-      case 'PROTECTED':
-        return 'danger';
-      case 'PENDING':
-      case 'RECOVERING':
-        return 'warning';
-      case 'DISMISSED':
-        return 'accent';
-      case 'HIDDEN':
-      default:
-        return 'success';
-    }
-  };
-
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}>
-      {/* Primary Protection Hero Card */}
-      <View style={styles.heroCard}>
-        <View style={styles.heroTopRow}>
-          <StatusBadge
-            label={
-              !permissionGranted
-                ? 'Permission Required'
-                : monitoringActive
-                ? `Protection Active · ${activeSensitivity}`
-                : 'Protection Paused'
-            }
-            tone={
-              !permissionGranted
-                ? 'warning'
-                : monitoringActive
-                ? 'success'
-                : 'neutral'
-            }
-          />
-          <Pressable onPress={onRefresh} style={styles.refreshBtn}>
-            <Text style={styles.refreshText}>Sync State</Text>
-          </Pressable>
+      {/* Top Brand Header on Royal Blue */}
+      <View style={styles.topBar}>
+        <Pressable onPress={onRefresh} style={styles.brandRow}>
+          <ScreenGuardLogo size={40} />
+          <View>
+            <Text style={styles.brandTitle}>Screen Guard</Text>
+            <Text style={styles.brandTagline}>Browse Safe. Live Free.</Text>
+          </View>
+        </Pressable>
+
+        <Pressable
+          onPress={onNavigateToSettings}
+          style={({pressed}) => [
+            styles.settingsCircle,
+            pressed && {opacity: 0.75},
+          ]}>
+          <SettingsGearIcon size={22} color="#FFFFFF" />
+        </Pressable>
+      </View>
+
+      {/* Hero Emblem & Status */}
+      <View style={styles.heroSection}>
+        <ScreenGuardLogo size={108} withHalo style={styles.heroLogo} />
+
+        <View
+          style={[
+            styles.statusPill,
+            !permissionGranted
+              ? styles.statusPillWarning
+              : monitoringActive
+              ? styles.statusPillProtected
+              : styles.statusPillPaused,
+          ]}>
+          <View style={styles.statusIconCircle}>
+            <Text
+              style={[
+                styles.statusIconText,
+                !permissionGranted
+                  ? {color: '#B45309'}
+                  : monitoringActive
+                  ? {color: colors.success}
+                  : {color: colors.textSecondary},
+              ]}>
+              {monitoringActive ? '✓' : '!'}
+            </Text>
+          </View>
+          <Text style={styles.statusPillText}>
+            {!permissionGranted
+              ? 'Setup Needed'
+              : monitoringActive
+              ? 'Protected'
+              : 'Paused'}
+          </Text>
         </View>
 
         <Text style={styles.heroTitle}>
           {!permissionGranted
-            ? 'Enable Screen Guard Protection'
+            ? 'Turn on Screen Guard'
             : monitoringActive
-            ? 'System-Wide Content Filtering Active'
-            : 'Protection Paused by User'}
+            ? 'Your device is safe'
+            : 'Protection is paused'}
         </Text>
 
         <Text style={styles.heroSubtitle}>
           {!permissionGranted
-            ? 'Screen Guard requires Android Accessibility access to observe active app windows, run on-device LiteRT classification, and display a protective overlay when explicit content is confirmed.'
+            ? 'Enable Screen Guard in Accessibility Settings to start blocking inappropriate content automatically.'
             : monitoringActive
-            ? `Observing foreground applications in ${activeSensitivity} mode (${preferences.confirmationFramesRequired}-frame confirmation, ${preferences.samplingIntervalMs}ms cooldown). Zero screenshots leave the device.`
-            : 'Accessibility Service is bound, but window observation and protective overlays are currently paused.'}
+            ? 'Screen Guard is actively blocking inappropriate content.'
+            : 'Tap Resume Protection below whenever you are ready to continue.'}
         </Text>
 
-        {/* Sensitivity Quick Selector (Balanced vs Strict) */}
-        <View style={styles.sensitivityRow}>
-          <Text style={styles.sensitivityLabel}>Protection Sensitivity:</Text>
-          <View style={styles.sensitivityPills}>
-            {(['BALANCED', 'STRICT'] as ProtectionSensitivityMode[]).map(
-              mode => {
-                const isSelected = activeSensitivity === mode;
-                return (
-                  <Pressable
-                    key={mode}
-                    onPress={() => onUpdatePreferences({sensitivityMode: mode})}
-                    style={[
-                      styles.sensitivityPill,
-                      isSelected && styles.sensitivityPillActive,
-                    ]}>
-                    <Text
-                      style={[
-                        styles.sensitivityPillText,
-                        isSelected && styles.sensitivityPillTextActive,
-                      ]}>
-                      {mode === 'BALANCED' ? 'Balanced' : 'Strict'}
-                    </Text>
-                  </Pressable>
-                );
-              },
-            )}
-          </View>
-        </View>
-
+        {/* Primary Gold Pill Button */}
         <Pressable
           onPress={handlePrimaryAction}
           style={({pressed}) => [
-            styles.primaryButton,
-            !permissionGranted
-              ? styles.primaryButtonWarning
-              : monitoringActive
-              ? styles.primaryButtonOutline
-              : styles.primaryButtonActive,
-            pressed && {opacity: 0.88},
+            styles.goldButton,
+            pressed && {backgroundColor: colors.goldPressed},
           ]}>
-          <Text
-            style={[
-              styles.primaryButtonText,
-              monitoringActive &&
-                permissionGranted &&
-                styles.primaryButtonTextOutline,
-            ]}>
+          {permissionGranted ? (
+            monitoringActive ? (
+              <PauseBarsIcon size={15} color={colors.goldText} />
+            ) : (
+              <PlayTriangleIcon size={14} color={colors.goldText} />
+            )
+          ) : null}
+          <Text style={styles.goldButtonText}>
             {!permissionGranted
-              ? 'Enable Protection in Accessibility Settings'
+              ? 'Enable Protection'
               : monitoringActive
               ? 'Pause Protection'
               : 'Resume Protection'}
           </Text>
         </Pressable>
+      </View>
 
-        <View style={styles.quickActionRow}>
-          <Pressable
-            onPress={() => onTriggerOverlayTest('EXPLICIT', 0, 0)}
-            disabled={!overlayEngineReady}
-            style={[
-              styles.secondaryButton,
-              !overlayEngineReady && {opacity: 0.5},
-            ]}>
-            <Text style={styles.secondaryButtonText}>
-              Preview Protective Shield
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={onNavigateToClassifier}
-            style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>
-              Classifier & Eval Suite
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={onNavigateToTesting}
-            style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>Overlay & App Tests</Text>
-          </Pressable>
+      {/* 3-Column White Stats Card */}
+      <View style={styles.statsCard}>
+        <View style={styles.statCol}>
+          <View style={styles.statIconWrap}>
+            <ShieldCheckIcon size={22} color={colors.royalBlue} />
+          </View>
+          <Text style={styles.statValue}>{itemsBlocked}</Text>
+          <Text style={styles.statLabel}>Items Blocked</Text>
+        </View>
+
+        <View style={styles.statDivider} />
+
+        <View style={styles.statCol}>
+          <View style={styles.statIconWrap}>
+            <ClockIcon size={22} color={colors.royalBlue} />
+          </View>
+          <Text style={styles.statValue}>{timeProtectedLabel}</Text>
+          <Text style={styles.statLabel}>Time Protected</Text>
+        </View>
+
+        <View style={styles.statDivider} />
+
+        <View style={styles.statCol}>
+          <View style={styles.statIconWrap}>
+            <BarsIcon size={22} color={colors.royalBlue} />
+          </View>
+          <Text style={styles.statValue}>{protectionRateLabel}</Text>
+          <Text style={styles.statLabel}>Protection Rate</Text>
         </View>
       </View>
 
-      {/* Milestone 3 Section 10.3: Protection Activity Summary Card */}
-      <View style={styles.sectionCard}>
-        <View style={styles.cardHeaderInline}>
-          <Text style={styles.sectionTitle}>Protection Activity Summary</Text>
-          <StatusBadge
-            label={`STATE: ${summary.overlayState}`}
-            tone={getOverlayStateTone(summary.overlayState)}
-            showDot
-          />
-        </View>
-
-        <View style={styles.counterGrid}>
-          <View style={styles.counterBox}>
-            <Text
-              style={[
-                styles.counterValue,
-                summary.totalProtectionEvents > 0 && {color: '#60A5FA'},
-              ]}>
-              {summary.totalProtectionEvents}
-            </Text>
-            <Text style={styles.counterLabel}>Protection Events</Text>
+      {/* Recent Activity Card */}
+      <View style={styles.activityCard}>
+        <View style={styles.activityHeader}>
+          <View style={styles.activityTitleRow}>
+            <PulseIcon size={20} color={colors.royalBlue} />
+            <Text style={styles.activityTitle}>Recent Activity</Text>
           </View>
-          <View style={styles.counterBox}>
-            <Text style={styles.counterValue}>
-              {summary.protectedAppsCount}
-            </Text>
-            <Text style={styles.counterLabel}>Apps Protected</Text>
-          </View>
-          <View style={styles.counterBox}>
-            <Text style={styles.counterValue}>
-              {summary.totalReturnToSafetyClicks}
-            </Text>
-            <Text style={styles.counterLabel}>Safe Returns</Text>
-          </View>
-          <View style={styles.counterBox}>
-            <Text style={styles.counterValue}>
-              {summary.totalAutoRecoveries}
-            </Text>
-            <Text style={styles.counterLabel}>Auto-Recovered</Text>
-          </View>
-        </View>
-
-        <MetricRow
-          label="Current Protection State"
-          value={summary.overlayState}
-          valueColor={
-            summary.overlayState === 'PROTECTED'
-              ? colors.danger
-              : summary.overlayState === 'PENDING' ||
-                summary.overlayState === 'RECOVERING'
-              ? colors.warning
-              : colors.success
-          }
-          subValue={
-            summary.overlayVisible
-              ? `Covering ${summary.activeProtectedAppLabel} (${summary.activeProtectedPackage}) · Trigger: ${summary.activeTriggerCategory}`
-              : summary.cooldownRemainingMs > 0
-              ? `Dismissal cooldown active (${Math.ceil(
-                  summary.cooldownRemainingMs / 1000,
-                )}s remaining)`
-              : 'No protective overlay currently displayed'
-          }
-          mono
-        />
-        <MetricRow
-          label="Active Sensitivity Policy"
-          value={
-            activeSensitivity === 'STRICT'
-              ? 'STRICT (Explicit, Nudity, Sexual Activity + High-Conf Suggestive)'
-              : 'BALANCED (Explicit, Nudity, Sexual Activity only)'
-          }
-          subValue={`Manual Dismiss: ${
-            preferences.allowManualDismiss
-              ? `Allowed (${preferences.dismissCooldownSeconds}s cooldown)`
-              : 'Disabled'
-          } · User Dismissals: ${summary.totalDismissals}`}
-          mono
-          isLast={!summary.overlayVisible}
-        />
-
-        {summary.overlayVisible && (
-          <Pressable
-            onPress={() => onDismissOverlay()}
-            style={[styles.outlineBtn, {marginTop: spacing.sm}]}>
-            <Text style={styles.outlineBtnText}>
-              Dismiss Active Protective Overlay
-            </Text>
-          </Pressable>
-        )}
-      </View>
-
-      {/* Milestone 3 Section 9 & 10.2: Permission Onboarding & Status Card */}
-      <View style={styles.sectionCard}>
-        <View style={styles.cardHeaderInline}>
-          <Text style={styles.sectionTitle}>
-            Permission Onboarding & Status
-          </Text>
-          <StatusBadge
-            label={
-              serviceActive
-                ? 'ALL REQUIRED GRANTED'
-                : permissionGranted
-                ? 'WAITING FOR BIND'
-                : 'SETUP NEEDED'
-            }
-            tone={serviceActive ? 'success' : 'warning'}
-          />
-        </View>
-
-        <View style={styles.onboardingItem}>
-          <View style={styles.onboardingHeader}>
-            <Text style={styles.onboardingTitle}>
-              1. Android Accessibility Service (Required)
-            </Text>
-            <StatusBadge
-              label={
-                serviceActive
-                  ? 'ACTIVE & BOUND'
-                  : permissionGranted
-                  ? 'ENABLED'
-                  : 'NOT GRANTED'
-              }
-              tone={serviceActive ? 'success' : 'warning'}
-              showDot={false}
-            />
-          </View>
-          <Text style={styles.onboardingDesc}>
-            Why it is needed: Allows Screen Guard to detect foreground window
-            changes, capture in-memory window screenshots for local LiteRT
-            classification, and attach a trusted{' '}
-            <Text style={styles.monoInline}>TYPE_ACCESSIBILITY_OVERLAY</Text>{' '}
-            shield over explicit content.
-          </Text>
-          <Pressable
-            onPress={onOpenAccessibilitySettings}
-            style={styles.onboardingActionBtn}>
-            <Text style={styles.onboardingActionText}>
-              {permissionGranted
-                ? 'Manage Accessibility Service in Android Settings'
-                : 'Open Accessibility Settings to Enable Screen Guard'}
-            </Text>
+          <Pressable onPress={onNavigateToActivity} hitSlop={8}>
+            <Text style={styles.viewAllText}>View All ›</Text>
           </Pressable>
         </View>
 
-        <View style={[styles.onboardingItem, styles.onboardingItemLast]}>
-          <View style={styles.onboardingHeader}>
-            <Text style={styles.onboardingTitle}>
-              2. Display Over Other Apps (Fallback Overlay)
-            </Text>
-            <StatusBadge
-              label={
-                overlayPermissionGranted
-                  ? 'GRANTED'
-                  : serviceActive
-                  ? 'COVERED BY A11Y'
-                  : 'OPTIONAL'
-              }
-              tone={
-                overlayPermissionGranted || serviceActive
-                  ? 'success'
-                  : 'neutral'
-              }
-              showDot={false}
+        {recentItems.length > 0 ? (
+          recentItems.map((item, idx) => (
+            <ActivityEventRow
+              key={item.id}
+              entry={item}
+              compact
+              isLast={idx === recentItems.length - 1}
             />
-          </View>
-          <Text style={styles.onboardingDesc}>
-            Why it is needed: When Accessibility Service is active, Screen Guard
-            uses native{' '}
-            <Text style={styles.monoInline}>TYPE_ACCESSIBILITY_OVERLAY</Text>{' '}
-            automatically. Granting{' '}
-            <Text style={styles.monoInline}>SYSTEM_ALERT_WINDOW</Text> provides
-            a secondary{' '}
-            <Text style={styles.monoInline}>TYPE_APPLICATION_OVERLAY</Text>{' '}
-            fallback and allows diagnostic overlay testing even before
-            Accessibility is bound.
-          </Text>
-          <Pressable
-            onPress={onOpenOverlaySettings}
-            style={styles.onboardingActionBtn}>
-            <Text style={styles.onboardingActionText}>
-              {overlayPermissionGranted
-                ? 'Manage Display Over Other Apps Permission'
-                : 'Open Display Over Other Apps Settings'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Milestone 2 On-Device LiteRT Model Status Card */}
-      <View style={styles.sectionCard}>
-        <View style={styles.cardHeaderInline}>
-          <Text style={styles.sectionTitle}>On-Device LiteRT NSFW Model</Text>
-          <StatusBadge
-            label={status.modelLoaded ? 'MODEL LOADED' : 'READY TO INIT'}
-            tone={status.modelLoaded ? 'success' : 'accent'}
-            showDot
-          />
-        </View>
-
-        <MetricRow
-          label="Model Name & ID"
-          value={status.modelId || 'nsfw-mobilenet-v2-140-224'}
-          mono
-        />
-        <MetricRow
-          label="Model Version"
-          value={status.modelVersion || '2.1.0-litert-2stage'}
-          subValue={`Size: ${(
-            (status.modelSizeBytes || 17251928) /
-            (1024 * 1024)
-          ).toFixed(2)} MB · Init: ${status.modelInitDurationMs || 0} ms`}
-          mono
-        />
-        <MetricRow
-          label="Hardware Delegate"
-          value={status.activeDelegate || 'CPU_XNNPACK_4T'}
-          subValue={status.inputTensorSpec}
-          mono
-        />
-        <MetricRow
-          label="Temporal Decision State"
-          value={status.temporalState || 'SAFE_STABLE'}
-          valueColor={
-            status.temporalState === 'CONFIRMED_DETECTION'
-              ? colors.danger
-              : status.temporalState === 'PENDING_CONFIRMATION'
-              ? colors.warning
-              : colors.success
-          }
-          subValue={`EWMA Smoothed Explicit: ${(
-            (status.smoothedExplicitScore || 0) * 100
-          ).toFixed(1)}% · Safe: ${(
-            (status.smoothedSafeScore || 1) * 100
-          ).toFixed(1)}%`}
-          mono
-          isLast
-        />
-      </View>
-
-      {/* Classification Telemetry & Counters */}
-      <View style={styles.sectionCard}>
-        <View style={styles.cardHeaderInline}>
-          <Text style={styles.sectionTitle}>
-            Classification Telemetry & Counts
-          </Text>
-          <StatusBadge
-            label={`${status.totalFramesClassified} Frames`}
-            tone="accent"
-            showDot={false}
-          />
-        </View>
-
-        <View style={styles.counterGrid}>
-          <View style={styles.counterBox}>
-            <Text style={styles.counterValue}>
-              {status.totalFramesClassified}
-            </Text>
-            <Text style={styles.counterLabel}>Total Classified</Text>
-          </View>
-          <View style={styles.counterBox}>
-            <Text
-              style={[
-                styles.counterValue,
-                status.explicitDetections > 0 && {color: colors.danger},
-              ]}>
-              {status.explicitDetections}
-            </Text>
-            <Text style={styles.counterLabel}>Explicit</Text>
-          </View>
-          <View style={styles.counterBox}>
-            <Text
-              style={[
-                styles.counterValue,
-                status.nudityDetections > 0 && {color: colors.warning},
-              ]}>
-              {status.nudityDetections}
-            </Text>
-            <Text style={styles.counterLabel}>Nudity</Text>
-          </View>
-          <View style={styles.counterBox}>
-            <Text style={styles.counterValue}>
-              {status.uncertainClassifications}
-            </Text>
-            <Text style={styles.counterLabel}>Uncertain</Text>
-          </View>
-        </View>
-
-        <MetricRow
-          label="Safe / Non-Explicit / Sexual Activity"
-          value={`${status.nonExplicitDetections + status.safeClassifications} Non-Explicit · ${status.sexualActivityDetections || 0} Sexual Activity · ${status.suggestiveDetections} Suggestive`}
-          mono
-        />
-        <MetricRow
-          label="dHash Duplicate Frames Skipped"
-          value={`${status.duplicateFramesSkipped} static frames skipped`}
-          subValue={`Obsolete frames dropped (backpressure): ${status.obsoleteFramesDropped}`}
-          mono
-          isLast
-        />
-      </View>
-
-      {/* Latest Classification Result (Metadata only — never displays thumbnails of explicit content) */}
-      <View style={styles.sectionCard}>
-        <View style={styles.cardHeaderInline}>
-          <Text style={styles.sectionTitle}>Latest Classification Output</Text>
-          <StatusBadge
-            label={`Confirmed: ${status.totalConfirmedInterventions}`}
-            tone={
-              status.totalConfirmedInterventions > 0 ? 'danger' : 'neutral'
-            }
-            showDot={false}
-          />
-        </View>
-
-        {latest ? (
-          <>
-            <MetricRow
-              label="Latest Predicted Category"
-              value={latest.predictedCategory || latest.category}
-              valueColor={
-                latest.predictedCategory === 'EXPLICIT' ||
-                latest.predictedCategory === 'NUDITY' ||
-                latest.predictedCategory === 'SEXUAL_ACTIVITY'
-                  ? colors.danger
-                  : latest.predictedCategory === 'SUGGESTIVE' ||
-                    latest.predictedCategory === 'UNCERTAIN'
-                  ? colors.warning
-                  : colors.success
-              }
-              subValue={
-                latest.originalCategory &&
-                latest.originalCategory !== latest.predictedCategory
-                  ? `Resolved from Stage 1 baseline: ${latest.originalCategory} (${(
-                      (latest.originalConfidence || 0) * 100
-                    ).toFixed(1)}%)`
-                  : undefined
-              }
-              mono
-            />
-            <MetricRow
-              label="Stage 2 & Low-Light Preprocessing"
-              value={`${latest.preprocessingApplied || 'ORIGINAL'}${
-                latest.isLowLightFrame
-                  ? ' (Low-Light L=' +
-                    (latest.meanLuminance || 0).toFixed(0) +
-                    ')'
-                  : ''
-              }`}
-              subValue={
-                latest.stage2Triggered
-                  ? `Stage 2 OpenNSFW ResNet-50: NSFW ${(
-                      (latest.stage2NsfwScore || 0) * 100
-                    ).toFixed(1)}% (${latest.stage2DurationMs || 0} ms)`
-                  : 'Stage 2 verifier not required (Stage 1 high confidence)'
-              }
-              mono
-            />
-            <MetricRow
-              label="Classification Confidence"
-              value={`${((latest.confidence || 0) * 100).toFixed(1)}%`}
-              subValue={`Threshold: ${(latest.thresholdUsed * 100).toFixed(
-                0,
-              )}% · Temporal State: ${latest.temporalState || 'SAFE_STABLE'}`}
-              mono
-            />
-            <MetricRow
-              label="Inference Duration"
-              value={
-                latest.isDuplicateSkipped
-                  ? '0 ms (dHash Cache Hit)'
-                  : `${latest.processingDurationMs} ms`
-              }
-              subValue={`Delegate: ${
-                latest.delegateUsed || status.activeDelegate
-              } · dHash: ${latest.frameHash || 'N/A'}`}
-              mono
-            />
-            <MetricRow
-              label="Raw 5-Class Probabilities"
-              value={`neutral ${((latest.neutralScore || 0) * 100).toFixed(
-                1,
-              )}% · porn ${((latest.pornScore || 0) * 100).toFixed(
-                1,
-              )}% · sexy ${((latest.sexyScore || 0) * 100).toFixed(1)}%`}
-              subValue={`drawings ${((latest.drawingsScore || 0) * 100).toFixed(
-                1,
-              )}% · hentai ${((latest.hentaiScore || 0) * 100).toFixed(1)}%`}
-              mono
-            />
-            <MetricRow
-              label="Temporal Confirmation Streak"
-              value={`${latest.consecutiveDetections} / ${preferences.confirmationFramesRequired} consecutive frames`}
-              subValue={`Evaluated on ${latest.frameWidth}×${latest.frameHeight} buffer for ${latest.packageName}`}
-              valueColor={
-                latest.confirmedIntervention
-                  ? colors.danger
-                  : colors.textSecondary
-              }
-              isLast
-            />
-          </>
+          ))
         ) : (
-          <View style={styles.emptyResultBox}>
-            <Text style={styles.emptyResultTitle}>
-              No live frame classified yet in this session
-            </Text>
-            <Text style={styles.emptyResultSubtitle}>
-              Navigate between apps with Protection enabled, or open the
-              Classifier tab to run on-device LiteRT inference on the 36-sample
-              evaluation suite.
+          <View style={styles.emptyActivity}>
+            <Text style={styles.emptyActivityText}>
+              No recent alerts — your screen is clear.
             </Text>
           </View>
         )}
       </View>
 
-      {/* Core System & Capture Status */}
-      <View style={styles.sectionCard}>
-        <Text style={styles.sectionTitle}>
-          Accessibility & Capture Pipeline
+      {/* Mode Pill Footer */}
+      <Pressable onPress={onNavigateToSettings} style={styles.modeFooter}>
+        <Text style={styles.modeFooterText}>
+          Protection Mode:{' '}
+          <Text style={styles.modeFooterHighlight}>
+            {preferences.sensitivityMode === 'STRICT' ? 'Strict' : 'Balanced'}
+          </Text>{' '}
+          · Tap to change
         </Text>
-        <MetricRow
-          label="Accessibility Service"
-          value={
-            status.serviceConnected ? 'BOUND & CONNECTED' : 'DISCONNECTED'
-          }
-          valueColor={
-            status.serviceConnected ? colors.success : colors.warning
-          }
-          mono
-        />
-        <MetricRow
-          label="Current Foreground App"
-          value={status.currentForegroundPackage || 'None'}
-          subValue={`${status.currentForegroundAppLabel} (windowId: ${status.currentWindowId})`}
-          mono
-        />
-        <MetricRow
-          label="Last Screenshot Capture"
-          value={
-            status.lastScreenshotWidth > 0
-              ? `${status.lastScreenshotWidth}×${status.lastScreenshotHeight} (${status.lastScreenshotDurationMs} ms)`
-              : status.lastScreenshotStatus
-          }
-          subValue={`Method: ${status.lastScreenshotMethod} · Captures: ${status.totalScreenshotsCaptured} OK / ${status.totalScreenshotFailures} Failed`}
-          mono
-        />
-        <MetricRow
-          label="HardwareBuffer Audit"
-          value={`${status.bufferDiagnostics.hardwareBuffersClosed}/${status.bufferDiagnostics.hardwareBuffersAllocated} Closed · Active: ${status.bufferDiagnostics.activeInMemoryBuffers}`}
-          valueColor={
-            status.bufferDiagnostics.activeInMemoryBuffers === 0
-              ? colors.success
-              : colors.warning
-          }
-          mono
-          isLast
-        />
-      </View>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -693,264 +285,203 @@ export function DashboardScreen({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.royalBlue,
   },
   content: {
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
     paddingBottom: spacing.xxl + 16,
   },
-  heroCard: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-  },
-  heroTopRow: {
+  topBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: spacing.md,
   },
-  refreshBtn: {
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: 4,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.border,
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm + 2,
   },
-  refreshText: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    color: colors.textSecondary,
+  brandTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textOnBlue,
+    letterSpacing: 0.2,
+  },
+  brandTagline: {
+    fontSize: 12,
+    color: colors.textOnBlueMuted,
+    marginTop: 1,
+  },
+  settingsCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.royalBlueGlass,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroSection: {
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  heroLogo: {
+    marginBottom: spacing.md,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    gap: 7,
+    marginBottom: spacing.md,
+  },
+  statusPillProtected: {
+    backgroundColor: colors.success,
+  },
+  statusPillPaused: {
+    backgroundColor: '#475569',
+  },
+  statusPillWarning: {
+    backgroundColor: colors.gold,
+  },
+  statusIconCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusIconText: {
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  statusPillText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '700',
   },
   heroTitle: {
-    fontSize: 19,
-    fontWeight: '700',
-    color: colors.textPrimary,
+    fontSize: 26,
+    fontWeight: '800',
+    color: colors.textOnBlue,
+    textAlign: 'center',
     marginBottom: spacing.xs + 2,
   },
   heroSubtitle: {
-    fontSize: 13.5,
-    color: colors.textSecondary,
+    fontSize: 14,
+    color: colors.textOnBlueMuted,
+    textAlign: 'center',
     lineHeight: 20,
-    marginBottom: spacing.md,
+    maxWidth: 280,
+    marginBottom: spacing.lg,
   },
-  sensitivityRow: {
+  goldButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 4,
-    marginBottom: spacing.md,
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: colors.gold,
+    borderRadius: radius.pill,
+    paddingVertical: 15,
+    paddingHorizontal: 32,
+    width: '92%',
+    elevation: 4,
   },
-  sensitivityLabel: {
-    fontSize: 12.5,
-    fontWeight: '600',
-    color: colors.textSecondary,
+  goldButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.goldText,
   },
-  sensitivityPills: {
+  statsCard: {
     flexDirection: 'row',
-    gap: spacing.xs + 2,
-  },
-  sensitivityPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.border,
+    alignItems: 'center',
     backgroundColor: colors.surface,
+    borderRadius: radius.xl,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.sm,
+    marginBottom: spacing.md + 2,
+    elevation: 3,
   },
-  sensitivityPillActive: {
-    borderColor: colors.accentBorder,
-    backgroundColor: colors.accentSoft,
-  },
-  sensitivityPillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-  },
-  sensitivityPillTextActive: {
-    color: '#60A5FA',
-    fontWeight: '700',
-  },
-  primaryButton: {
-    paddingVertical: 13,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButtonActive: {
-    backgroundColor: colors.accent,
-  },
-  primaryButtonWarning: {
-    backgroundColor: colors.warning,
-  },
-  primaryButtonOutline: {
-    backgroundColor: colors.surfaceElevated,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-  },
-  primaryButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
-  },
-  primaryButtonTextOutline: {
-    color: colors.textPrimary,
-  },
-  quickActionRow: {
-    flexDirection: 'row',
-    gap: spacing.xs + 2,
-    marginTop: spacing.sm + 2,
-  },
-  secondaryButton: {
+  statCol: {
     flex: 1,
-    paddingVertical: 9,
-    paddingHorizontal: spacing.xs + 2,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surfaceSubtle,
-    borderWidth: 1,
-    borderColor: colors.border,
     alignItems: 'center',
-    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
-  secondaryButtonText: {
+  statIconWrap: {
+    height: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  statValue: {
+    fontSize: 19,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 2,
+  },
+  statLabel: {
     fontSize: 11.5,
-    fontWeight: '600',
     color: colors.textSecondary,
     textAlign: 'center',
   },
-  sectionCard: {
+  statDivider: {
+    width: 1,
+    height: 48,
+    backgroundColor: colors.border,
+  },
+  activityCard: {
     backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: radius.xl,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.md,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.sm,
+    elevation: 3,
   },
-  cardHeaderInline: {
+  activityHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: spacing.xs,
   },
-  sectionTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    marginBottom: spacing.xs,
-  },
-  counterGrid: {
+  activityTitleRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginVertical: spacing.sm,
-  },
-  counterBox: {
-    flex: 1,
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingVertical: spacing.sm + 2,
     alignItems: 'center',
+    gap: 8,
   },
-  counterValue: {
-    fontSize: 17,
-    fontWeight: '700',
+  activityTitle: {
+    fontSize: 16,
+    fontWeight: '800',
     color: colors.textPrimary,
-    fontFamily: typography.mono,
   },
-  counterLabel: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 2,
-    textTransform: 'uppercase',
-    textAlign: 'center',
-  },
-  onboardingItem: {
-    paddingVertical: spacing.sm + 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-  },
-  onboardingItemLast: {
-    borderBottomWidth: 0,
-    paddingBottom: 4,
-  },
-  onboardingHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-    gap: spacing.sm,
-  },
-  onboardingTitle: {
+  viewAllText: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: colors.textPrimary,
-    flex: 1,
+    color: colors.accent,
   },
-  onboardingDesc: {
-    fontSize: 12,
+  emptyActivity: {
+    paddingVertical: spacing.lg,
+    alignItems: 'center',
+  },
+  emptyActivityText: {
+    fontSize: 13.5,
     color: colors.textSecondary,
-    lineHeight: 17.5,
-    marginBottom: spacing.sm,
   },
-  monoInline: {
-    fontFamily: typography.mono,
-    color: colors.textPrimary,
-    fontSize: 11.5,
-  },
-  onboardingActionBtn: {
-    backgroundColor: colors.surfaceElevated,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    paddingVertical: 9,
-    paddingHorizontal: spacing.md,
+  modeFooter: {
+    marginTop: spacing.md,
     alignItems: 'center',
+    paddingVertical: spacing.xs,
   },
-  onboardingActionText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#60A5FA',
-  },
-  outlineBtn: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    borderColor: colors.borderStrong,
-    paddingVertical: 9,
-    alignItems: 'center',
-  },
-  outlineBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textPrimary,
-  },
-  emptyResultBox: {
-    paddingVertical: spacing.md,
-  },
-  emptyResultTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  emptyResultSubtitle: {
+  modeFooterText: {
     fontSize: 12.5,
-    color: colors.textSecondary,
-    lineHeight: 18,
+    color: colors.textOnBlueMuted,
+  },
+  modeFooterHighlight: {
+    color: colors.gold,
+    fontWeight: '700',
   },
 });
