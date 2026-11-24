@@ -2,9 +2,13 @@ package com.paulfruitful.screenguard.protection
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.provider.Browser
+import com.paulfruitful.screenguard.MainActivity
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
 import com.paulfruitful.screenguard.bridge.EventBridge
 import com.paulfruitful.screenguard.classifier.ClassificationResult
@@ -62,6 +66,7 @@ object ProtectionCoordinator {
                 overlayController = ScreenGuardOverlayController(
                     appContext = ctx,
                     onReturnToSafetyClicked = { reason -> handleReturnToSafety(reason) },
+                    onOpenScriptureClicked = { reason, verse -> handleOpenScripture(reason, verse) },
                     onDismissClicked = { reason -> handleManualDismiss(reason) }
                 )
             }
@@ -358,26 +363,87 @@ object ProtectionCoordinator {
         clearActiveMetadata()
         LocalStorage.recordReturnToSafetyClicked(ctx)
 
-        // Navigate the user back out of the offending post/screen if in a third-party application
-        val service = ScreenGuardAccessibilityService.getActiveInstance()
-        if (service != null && reason.packageName != SELF_PACKAGE) {
-            try {
-                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
-            } catch (_: Exception) {
-            }
+        val targetPkg = reason.packageName.ifBlank {
+            ScreenGuardAccessibilityService.currentForegroundPackage
         }
+        navigateToApplicationHomePage(ctx, targetPkg)
 
         LocalStorage.appendActivityLog(
             ctx,
             ActivityLogRecord(
                 type = "SERVICE_STATE",
                 title = "User Clicked 'Return to Safe Browsing'",
-                detail = "Hid protective overlay and navigated back from ${reason.appLabel} (${reason.packageName}).",
-                packageName = reason.packageName
+                detail = "Hid protective overlay and navigated to the home page of ${reason.appLabel} ($targetPkg).",
+                packageName = targetPkg
             )
         )
 
         EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
+    }
+
+    private fun handleOpenScripture(reason: ProtectionReason, verse: MinistryBibleVerse) {
+        val ctx = appContext ?: return
+        overlayController?.hideProtection()
+        decisionEngine.resetAll()
+        clearActiveMetadata()
+        LocalStorage.recordReturnToSafetyClicked(ctx)
+
+        val targetPkg = reason.packageName.ifBlank {
+            ScreenGuardAccessibilityService.currentForegroundPackage
+        }
+        // Exit the offending post/screen in the background before opening the Bible app / Bible.com
+        val service = ScreenGuardAccessibilityService.getActiveInstance()
+        if (service != null && targetPkg != SELF_PACKAGE) {
+            try {
+                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            } catch (_: Exception) {
+            }
+        }
+
+        BibleVerseRepository.openScriptureInBibleAppOrWeb(ctx, verse)
+
+        LocalStorage.appendActivityLog(
+            ctx,
+            ActivityLogRecord(
+                type = "SERVICE_STATE",
+                title = "Opened Scripture (${verse.reference})",
+                detail = "User expanded ${verse.reference} on Bible App / Bible.com from protective shield over ${reason.appLabel}.",
+                packageName = targetPkg
+            )
+        )
+
+        EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
+    }
+
+    /**
+     * Exits the offending post/video in the underlying app and navigates the user directly
+     * to the Home page of the Screen Guard application.
+     */
+    private fun navigateToApplicationHomePage(context: Context, packageName: String) {
+        val service = ScreenGuardAccessibilityService.getActiveInstance()
+        val pkg = packageName.lowercase()
+
+        // 1. First dismiss/pause any open media lightbox or video player in the underlying app via BACK
+        if (service != null && pkg != SELF_PACKAGE) {
+            try {
+                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            } catch (_: Exception) {
+            }
+        }
+
+        // 2. Open the Home page of the Screen Guard application
+        try {
+            val sgHome = Intent(context, MainActivity::class.java).apply {
+                putExtra("navigateToTab", "HOME")
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            }
+            context.startActivity(sgHome)
+        } catch (_: Exception) {
+        }
     }
 
     private fun handleManualDismiss(reason: ProtectionReason) {

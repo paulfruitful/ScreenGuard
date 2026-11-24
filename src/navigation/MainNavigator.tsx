@@ -1,5 +1,7 @@
-import React, {useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {
+  AppState,
+  AppStateStatus,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -34,6 +36,7 @@ const TABS: {key: TabKey; label: string}[] = [
 
 export function MainNavigator() {
   const [activeTab, setActiveTab] = useState<TabKey>('HOME');
+  const prevReturnClicksRef = useRef<number>(0);
   const {
     status,
     preferences,
@@ -57,6 +60,27 @@ export function MainNavigator() {
     runDisconnectionTest,
     recordCompatibilityResult,
   } = useScreenGuard();
+
+  useEffect(() => {
+    const clicks = status.protectionSummary?.totalReturnToSafetyClicks || 0;
+    if (clicks > prevReturnClicksRef.current) {
+      prevReturnClicksRef.current = clicks;
+      setActiveTab('HOME');
+    }
+  }, [status.protectionSummary?.totalReturnToSafetyClicks]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
+      if (next === 'active') {
+        const clicks = status.protectionSummary?.totalReturnToSafetyClicks || 0;
+        if (clicks > prevReturnClicksRef.current) {
+          prevReturnClicksRef.current = clicks;
+          setActiveTab('HOME');
+        }
+      }
+    });
+    return () => sub.remove();
+  }, [status.protectionSummary?.totalReturnToSafetyClicks]);
 
   const renderTabIcon = (key: TabKey, isActive: boolean) => {
     const color = isActive ? colors.accent : '#64748B';

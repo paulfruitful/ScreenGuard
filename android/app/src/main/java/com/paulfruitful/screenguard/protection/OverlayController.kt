@@ -56,6 +56,7 @@ interface OverlayController {
 class ScreenGuardOverlayController(
     private val appContext: Context,
     private val onReturnToSafetyClicked: (ProtectionReason) -> Unit,
+    private val onOpenScriptureClicked: (ProtectionReason, MinistryBibleVerse) -> Unit,
     private val onDismissClicked: (ProtectionReason) -> Unit
 ) : OverlayController {
 
@@ -70,6 +71,8 @@ class ScreenGuardOverlayController(
     @Volatile
     private var currentReason: ProtectionReason? = null
     @Volatile
+    private var activeVerse: MinistryBibleVerse = BibleVerseRepository.pickRandomVerse()
+    @Volatile
     private var lastOverlayError: String = "NONE"
 
     // View references updated in-place to avoid view recreation
@@ -77,6 +80,9 @@ class ScreenGuardOverlayController(
     private var headingText: TextView? = null
     private var supportingText: TextView? = null
     private var detailMetaText: TextView? = null
+    private var verseQuoteText: TextView? = null
+    private var verseReferenceText: TextView? = null
+    private var openScriptureButton: TextView? = null
     private var primarySafeButton: TextView? = null
     private var secondaryDismissButton: TextView? = null
 
@@ -87,6 +93,9 @@ class ScreenGuardOverlayController(
     override fun showProtection(reason: ProtectionReason) {
         runOnMain {
             currentReason = reason
+            if (!isOverlayAttached) {
+                activeVerse = BibleVerseRepository.pickRandomVerse()
+            }
             if (isOverlayAttached && rootOverlayView != null) {
                 rootOverlayView?.animate()?.cancel()
                 rootOverlayView?.alpha = 1f
@@ -385,11 +394,95 @@ class ScreenGuardOverlayController(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = dpInt(context, 22f)
+                bottomMargin = dpInt(context, 16f)
             }
         }
         detailMetaText = meta
         card.addView(meta)
+
+        // 5b. Ministry Bible Verse Card (Random Scripture against lust + Expand in Bible App / Bible.com button)
+        val scriptureBox = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(context, 16f)
+                setColor(Color.parseColor("#F8FAFF"))
+                setStroke(dpInt(context, 1f), Color.parseColor("#DCE6F7"))
+            }
+            val padH = dpInt(context, 16f)
+            val padV = dpInt(context, 14f)
+            setPadding(padH, padV, padH, padV)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpInt(context, 18f)
+            }
+        }
+
+        val quoteView = TextView(context).apply {
+            text = activeVerse.text
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextColor(Color.parseColor("#1E293B"))
+            typeface = Typeface.create("serif", Typeface.ITALIC)
+            gravity = Gravity.CENTER
+            setLineSpacing(dp(context, 2.5f), 1.0f)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpInt(context, 6f)
+            }
+        }
+        verseQuoteText = quoteView
+        scriptureBox.addView(quoteView)
+
+        val refView = TextView(context).apply {
+            text = "— ${activeVerse.reference}"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextColor(Color.parseColor("#0C2D84"))
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpInt(context, 12f)
+            }
+        }
+        verseReferenceText = refView
+        scriptureBox.addView(refView)
+
+        val scriptureBtn = TextView(context).apply {
+            text = "Read Full Scripture in Bible"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(Color.parseColor("#0C2D84"))
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(context, 999f)
+                setColor(Color.parseColor("#E6EEFC"))
+                setStroke(dpInt(context, 1f), Color.parseColor("#BDD0F5"))
+            }
+            setPadding(dpInt(context, 16f), dpInt(context, 9f), dpInt(context, 16f), dpInt(context, 9f))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener {
+                val r = currentReason
+                if (r != null) {
+                    onOpenScriptureClicked(r, activeVerse)
+                }
+            }
+        }
+        openScriptureButton = scriptureBtn
+        scriptureBox.addView(scriptureBtn)
+        card.addView(scriptureBox)
 
         // 6. Primary Action: Gold Pill "Return to Safe Browsing"
         val primaryBtn = TextView(context).apply {
@@ -471,6 +564,8 @@ class ScreenGuardOverlayController(
 
         val appName = reason.appLabel.ifBlank { reason.packageName }
         detailMetaText?.text = "Protected in $appName"
+        verseQuoteText?.text = activeVerse.text
+        verseReferenceText?.text = "— ${activeVerse.reference}"
 
         secondaryDismissButton?.visibility = View.GONE
     }
