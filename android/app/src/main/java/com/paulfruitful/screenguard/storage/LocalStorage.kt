@@ -14,16 +14,16 @@ data class UserPreferencesData(
         "com.google.android.inputmethod.latin",
         "com.samsung.android.honeyboard"
     ),
-    val samplingIntervalMs: Long = 1100L,
-    val debounceDelayMs: Long = 220L,
+    val samplingIntervalMs: Long = 1020L,
+    val debounceDelayMs: Long = 65L,
     val preferWindowCapture: Boolean = true,
-    val confidenceThreshold: Float = 0.60f,
+    val confidenceThreshold: Float = 0.55f,
     val confirmationFramesRequired: Int = 1,
     val interventionBehavior: String = "PROTECTIVE_OVERLAY",
-    val sensitivityMode: String = "BALANCED",
+    val sensitivityMode: String = "STRICT",
     val interveneOnSuggestiveInStrict: Boolean = true,
-    val allowManualDismiss: Boolean = true,
-    val dismissCooldownSeconds: Int = 12,
+    val allowManualDismiss: Boolean = false,
+    val dismissCooldownSeconds: Int = 0,
     val mockClassifierProfile: String = "DETERMINISTIC_SAFE",
     val allowSelfPackageInDiagnostics: Boolean = true
 )
@@ -140,7 +140,7 @@ object LocalStorage {
             } else {
                 excludedSet.addAll(UserPreferencesData().excludedPackages)
             }
-            val needsFastMigration = !obj.optBoolean("fastAdaptiveV2", false)
+            val needsFastMigration = !obj.optBoolean("strictFastV3", false)
             val rawBehavior = obj.optString("interventionBehavior", "PROTECTIVE_OVERLAY")
             val effectiveBehavior = if (needsFastMigration ||
                 rawBehavior == "WARNING_BANNER_FUTURE" ||
@@ -153,28 +153,16 @@ object LocalStorage {
             val loaded = UserPreferencesData(
                 protectionEnabled = obj.optBoolean("protectionEnabled", true),
                 excludedPackages = excludedSet,
-                samplingIntervalMs = if (needsFastMigration) {
-                    1100L
-                } else {
-                    obj.optLong("samplingIntervalMs", 1100L).coerceAtLeast(1050L)
-                },
-                debounceDelayMs = if (needsFastMigration) {
-                    220L
-                } else {
-                    obj.optLong("debounceDelayMs", 220L).coerceIn(120L, 5000L)
-                },
+                samplingIntervalMs = 1020L,
+                debounceDelayMs = 65L,
                 preferWindowCapture = obj.optBoolean("preferWindowCapture", true),
-                confidenceThreshold = if (needsFastMigration) {
-                    0.60f
-                } else {
-                    obj.optDouble("confidenceThreshold", 0.60).toFloat().coerceIn(0.3f, 0.99f)
-                },
+                confidenceThreshold = 0.55f,
                 confirmationFramesRequired = 1,
                 interventionBehavior = effectiveBehavior,
-                sensitivityMode = obj.optString("sensitivityMode", "BALANCED").uppercase(),
-                interveneOnSuggestiveInStrict = obj.optBoolean("interveneOnSuggestiveInStrict", true),
-                allowManualDismiss = obj.optBoolean("allowManualDismiss", true),
-                dismissCooldownSeconds = obj.optInt("dismissCooldownSeconds", 12).coerceIn(3, 120),
+                sensitivityMode = "STRICT",
+                interveneOnSuggestiveInStrict = true,
+                allowManualDismiss = false,
+                dismissCooldownSeconds = 0,
                 mockClassifierProfile = obj.optString("mockClassifierProfile", "DETERMINISTIC_SAFE"),
                 allowSelfPackageInDiagnostics = obj.optBoolean("allowSelfPackageInDiagnostics", true)
             )
@@ -237,19 +225,10 @@ object LocalStorage {
                 interventionBehavior = if (patch.has("interventionBehavior")) {
                     patch.optString("interventionBehavior", current.interventionBehavior)
                 } else current.interventionBehavior,
-                sensitivityMode = if (patch.has("sensitivityMode")) {
-                    val rawMode = patch.optString("sensitivityMode", current.sensitivityMode).uppercase()
-                    if (rawMode == "STRICT") "STRICT" else "BALANCED"
-                } else current.sensitivityMode,
-                interveneOnSuggestiveInStrict = if (patch.has("interveneOnSuggestiveInStrict")) {
-                    patch.optBoolean("interveneOnSuggestiveInStrict", current.interveneOnSuggestiveInStrict)
-                } else current.interveneOnSuggestiveInStrict,
-                allowManualDismiss = if (patch.has("allowManualDismiss")) {
-                    patch.optBoolean("allowManualDismiss", current.allowManualDismiss)
-                } else current.allowManualDismiss,
-                dismissCooldownSeconds = if (patch.has("dismissCooldownSeconds")) {
-                    patch.optInt("dismissCooldownSeconds", current.dismissCooldownSeconds).coerceIn(3, 120)
-                } else current.dismissCooldownSeconds,
+                sensitivityMode = "STRICT",
+                interveneOnSuggestiveInStrict = true,
+                allowManualDismiss = false,
+                dismissCooldownSeconds = 0,
                 mockClassifierProfile = if (patch.has("mockClassifierProfile")) {
                     patch.optString("mockClassifierProfile", current.mockClassifierProfile)
                 } else current.mockClassifierProfile,
@@ -292,6 +271,7 @@ object LocalStorage {
             put("mockClassifierProfile", prefs.mockClassifierProfile)
             put("allowSelfPackageInDiagnostics", prefs.allowSelfPackageInDiagnostics)
             put("fastAdaptiveV2", true)
+            put("strictFastV3", true)
         }
         sp.edit().putString(KEY_USER_PREFS, obj.toString()).apply()
     }

@@ -29,7 +29,7 @@ import kotlin.coroutines.resume
  * `FLAG_SECURE`, invalid window IDs, disconnected service states, and unsupported API levels.
  */
 object AccessibilityScreenshotCapturer {
-    private const val ANDROID_MIN_SCREENSHOT_INTERVAL_MS = 1050L
+    private const val ANDROID_MIN_SCREENSHOT_INTERVAL_MS = 1005L
 
     private val captureExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ScreenGuard-ScreenshotCallback").apply { isDaemon = true }
@@ -68,28 +68,35 @@ object AccessibilityScreenshotCapturer {
             return failureOutcome("NONE", packageName, windowId, "UNSUPPORTED_ANDROID_VERSION")
         }
 
-        val nowElapsed = SystemClock.elapsedRealtime()
-        val elapsedSinceLast = nowElapsed - lastScreenshotRequestElapsedMs.get()
-        if (!bypassCooldownForDiagnostic && elapsedSinceLast < ANDROID_MIN_SCREENSHOT_INTERVAL_MS) {
-            BufferReleaseTracker.recordCaptureFailure("RATE_GUARD", "INTERVAL_TIME_SHORT")
-            return failureOutcome("RATE_GUARD", packageName, windowId, "INTERVAL_TIME_SHORT")
-        }
-
         if (!captureInProgress.compareAndSet(false, true)) {
             return failureOutcome("CONCURRENT_GUARD", packageName, windowId, "CAPTURE_IN_PROGRESS")
         }
 
         try {
+            val nowElapsed = SystemClock.elapsedRealtime()
+            val elapsedSinceLast = nowElapsed - lastScreenshotRequestElapsedMs.get()
+            if (!bypassCooldownForDiagnostic && elapsedSinceLast < ANDROID_MIN_SCREENSHOT_INTERVAL_MS) {
+                val waitMs = (ANDROID_MIN_SCREENSHOT_INTERVAL_MS - elapsedSinceLast).coerceIn(1L, ANDROID_MIN_SCREENSHOT_INTERVAL_MS)
+                delay(waitMs)
+            }
+
             lastScreenshotRequestElapsedMs.set(SystemClock.elapsedRealtime())
             val startNs = SystemClock.elapsedRealtimeNanos()
+            val overlayWasVisible = ProtectionCoordinator.isOverlayVisible()
 
+            // When the protective overlay is visible, prefer per-window capture of the underlying app
+            // so the shield stays 100% solid without blinking. When the overlay is hidden, prefer
+            // SurfaceFlinger display capture (`takeScreenshot(DEFAULT_DISPLAY)`) so hardware-accelerated
+            // video surfaces (SurfaceView/ExoPlayer) and media lightboxes on X/Twitter, Instagram, TikTok,
+            // and third-party apps are always composited on the very first attempt.
             val canUseWindowApi = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
                 preferWindowCapture &&
+                overlayWasVisible &&
                 windowId >= 0 &&
                 !ServiceHealthMonitor.shouldBypassWindowCapture(windowId)
 
             if (canUseWindowApi) {
-                val windowAttempt = withTimeoutOrNull(2000L) {
+                val windowAttempt = withTimeoutOrNull(1500L) {
                     requestWindowScreenshot(service, windowId)
                 } ?: RawCaptureAttempt(
                     null,
@@ -117,14 +124,12 @@ object AccessibilityScreenshotCapturer {
                     return outcome
                 }
 
-                // If per-window screenshot failed because the windowId became stale/invalid or
-                // surface compositing returned INTERNAL_ERROR, fall back once to display-level
-                // takeScreenshot(DEFAULT_DISPLAY) (never bypassing SECURE_WINDOW).
                 val errStr = mapErrorCodeToString(windowAttempt.errorCode)
                 ServiceHealthMonitor.onCaptureFailure(errStr, usedWindowApi = true, windowId = windowId)
                 val shouldFallbackToDisplay =
                     windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW ||
-                        windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR
+                        windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR ||
+                        windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
                 if (!shouldFallbackToDisplay) {
                     BufferReleaseTracker.recordCaptureFailure(
                         "takeScreenshotOfWindow($windowId)",
@@ -148,20 +153,19 @@ object AccessibilityScreenshotCapturer {
                 }
             }
 
-            // Display-level screenshot (Android 11+ or fallback from invalid windowId)
+            // Display-level screenshot (fast primary path when overlay is hidden, or fallback when overlay is visible)
             val displayMethod = if (canUseWindowApi) {
                 "takeScreenshot(DEFAULT_DISPLAY_FALLBACK)"
             } else {
                 "takeScreenshot(DEFAULT_DISPLAY)"
             }
 
-            val overlayWasVisible = ProtectionCoordinator.isOverlayVisible()
             if (overlayWasVisible) {
                 ProtectionCoordinator.setOverlayTransparentForProbe(true)
-                delay(28L)
+                delay(24L)
             }
-            val displayAttempt = try {
-                withTimeoutOrNull(2000L) {
+            var displayAttempt = try {
+                withTimeoutOrNull(1800L) {
                     requestDisplayScreenshot(service)
                 } ?: RawCaptureAttempt(
                     null,
@@ -170,6 +174,27 @@ object AccessibilityScreenshotCapturer {
             } finally {
                 if (overlayWasVisible) {
                     ProtectionCoordinator.setOverlayTransparentForProbe(false)
+                }
+            }
+
+            // If Android's internal 1000ms timer rejected the call by a few milliseconds, wait 140ms and retry once
+            if (displayAttempt.result == null &&
+                displayAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
+            ) {
+                delay(140L)
+                lastScreenshotRequestElapsedMs.set(SystemClock.elapsedRealtime())
+                if (overlayWasVisible) {
+                    ProtectionCoordinator.setOverlayTransparentForProbe(true)
+                    delay(20L)
+                }
+                displayAttempt = try {
+                    withTimeoutOrNull(1800L) {
+                        requestDisplayScreenshot(service)
+                    } ?: displayAttempt
+                } finally {
+                    if (overlayWasVisible) {
+                        ProtectionCoordinator.setOverlayTransparentForProbe(false)
+                    }
                 }
             }
             if (displayAttempt.result != null) {

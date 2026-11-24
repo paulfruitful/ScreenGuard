@@ -356,13 +356,11 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         if (prefs.excludedPackages.contains(activePkg)) return
 
         val settleMs = if (isAppChanged) {
-            85L
+            35L
         } else {
-            prefs.debounceDelayMs.coerceIn(120L, 450L)
+            45L
         }
-        val minIntervalMs = DetectionEngine.computeRecommendedCooldownMs(
-            prefs.samplingIntervalMs.coerceAtLeast(1050L)
-        )
+        val minIntervalMs = 1005L
 
         BufferReleaseTracker.onDebounceEventReceived(accepted = true)
         frameScheduler.request(
@@ -645,15 +643,21 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                     )
                 )
 
-                if (decision.targetOverlayState == OverlayState.PENDING &&
+                val needsRapidFollowUp =
+                    decision.targetOverlayState == OverlayState.PENDING ||
+                        effectiveClassification.predictedCategory == ContentCategory.UNCERTAIN.name ||
+                        effectiveClassification.pornScore >= 0.05f ||
+                        effectiveClassification.sexyScore >= 0.14f
+
+                if (needsRapidFollowUp &&
                     prefs.protectionEnabled &&
                     !ProtectionCoordinator.isOverlayVisible()
                 ) {
                     frameScheduler.request(
                         FrameTrigger(
                             eventAtNs = PipelineTelemetry.nowNs(),
-                            settleMs = 50L,
-                            minIntervalMs = 1080L,
+                            settleMs = 20L,
+                            minIntervalMs = 1005L,
                             isAppSwitch = false
                         )
                     )
@@ -785,12 +789,15 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         adaptiveWatchdogJob?.cancel()
         adaptiveWatchdogJob = serviceScope.launch {
             while (isActive && instance != null) {
-                delay(1150L)
+                delay(250L)
                 try {
                     if (!isScreenInteractive()) continue
                     val prefs = LocalStorage.getPreferences(applicationContext)
                     if (!prefs.protectionEnabled) continue
                     if (frameScheduler.isFrameInFlight) continue
+
+                    val elapsedSinceCapture = System.currentTimeMillis() - lastScreenshotTimestamp
+                    if (elapsedSinceCapture < 1005L) continue
 
                     val resolved = ActiveWindowResolver.resolve(
                         service = this@ScreenGuardAccessibilityService,
@@ -817,28 +824,14 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                         currentWindowId = resolved.windowId
                     }
 
-                    val overlayVisible = ProtectionCoordinator.isOverlayVisible()
-                    val elapsedSinceCapture = System.currentTimeMillis() - lastScreenshotTimestamp
-
-                    if (overlayVisible && elapsedSinceCapture >= 1100L) {
-                        frameScheduler.request(
-                            FrameTrigger(
-                                eventAtNs = PipelineTelemetry.nowNs(),
-                                settleMs = 0L,
-                                minIntervalMs = 1060L,
-                                isAppSwitch = false
-                            )
+                    frameScheduler.request(
+                        FrameTrigger(
+                            eventAtNs = PipelineTelemetry.nowNs(),
+                            settleMs = 0L,
+                            minIntervalMs = 1005L,
+                            isAppSwitch = false
                         )
-                    } else if (!overlayVisible && elapsedSinceCapture >= 1250L) {
-                        frameScheduler.request(
-                            FrameTrigger(
-                                eventAtNs = PipelineTelemetry.nowNs(),
-                                settleMs = 0L,
-                                minIntervalMs = 1100L,
-                                isAppSwitch = false
-                            )
-                        )
-                    }
+                    )
                 } catch (_: Exception) {
                 }
             }

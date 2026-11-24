@@ -339,6 +339,12 @@ class LiteRtNsfwClassifier(
      *    borderline suspicious, or shows partially clothed (`porn + sexy`) or low-light evidence.
      */
     override suspend fun classify(bitmap: Bitmap): ClassificationResult =
+        classifyWithNativeCrops(bitmap, emptyList())
+
+    suspend fun classifyWithNativeCrops(
+        bitmap: Bitmap,
+        nativeRoiCrops: List<Bitmap> = emptyList()
+    ): ClassificationResult =
         withContext(Dispatchers.Default) {
             val totalStartNs = SystemClock.elapsedRealtimeNanos()
             if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
@@ -381,73 +387,124 @@ class LiteRtNsfwClassifier(
 
                 var effectiveS1 = origS1
                 var appliedMode = PreprocessingMode.ORIGINAL
+                var bestNativeCropBmp: Bitmap? = null
                 val textSignal = ScreenTextContextAnalyzer.getLatestSignal()
 
-                // Fast Safe Short-Circuit (Phase B < 50 ms target):
-                // If Stage 1 on the primary frame is overwhelmingly safe and there is no adult text
-                // or low-light ambiguity, return immediately after a single Stage-1 pass (~18-28 ms).
-                val clearlySafeStage1 =
-                    !illum.isLowLight &&
-                        (origS1.neutral + origS1.drawings) >= 0.85f &&
-                        origS1.porn < 0.055f &&
-                        origS1.sexy < 0.14f &&
-                        textSignal.adultScore < 0.30f &&
-                        !textSignal.isExplicitPornDomain
+                // 2. Native-Resolution Social Media Feed/Video ROI Scan (when live HardwareBuffer crops exist):
+                // On X/Twitter, Instagram, TikTok, Facebook, Reddit, and Chrome, an in-feed video often
+                // occupies 35-50% of the vertical screen height while surrounding UI chrome makes the
+                // full-screen 224x224 look neutral. Evaluating the native-resolution 1:1 center video crop
+                // catches explicit in-feed videos on the very first frame.
+                val validNativeCrops = nativeRoiCrops.filter { !it.isRecycled && it.width == INPUT_WIDTH && it.height == INPUT_HEIGHT }
+                if (validNativeCrops.isNotEmpty() && origS1.drawings < 0.82f) {
+                    val centerCropBmp = validNativeCrops[0]
+                    val centerS1 = inferenceMutex.withLock { runStage1Locked(centerCropBmp) }
 
-                if (clearlySafeStage1) {
-                    val fastMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
-                    return@withContext resolveTwoStageTaxonomy(
-                        origS1 = origS1,
-                        effectiveS1 = origS1,
-                        s2 = null,
-                        illum = illum,
-                        preprocessingMode = PreprocessingMode.ORIGINAL,
-                        baselineCategory = baselineResult.predictedCategory,
-                        baselineConfidence = baselineResult.confidence,
-                        durationMs = fastMs,
-                        explicitThreshold = prefs.confidenceThreshold
-                    )
-                }
+                    val shouldCheckActionCrop = validNativeCrops.size > 1 && (
+                        centerS1.porn >= 0.04f ||
+                            centerS1.sexy >= 0.08f ||
+                            origS1.porn >= 0.03f ||
+                            origS1.sexy >= 0.06f ||
+                            textSignal.adultScore >= 0.25f
+                        )
+                    val actionCropBmp = if (shouldCheckActionCrop) validNativeCrops[1] else centerCropBmp
+                    val actionS1 = if (shouldCheckActionCrop) {
+                        inferenceMutex.withLock { runStage1Locked(actionCropBmp) }
+                    } else {
+                        centerS1
+                    }
 
-                // 2. Multi-Region ROI Visual Scan for Vertical Mobile Videos & Social Feeds:
-                // Full-screen 1080x2400 captures often contain 40% ceiling/background and 25% UI controls,
-                // squashing the central action when resized to 224x224.
-                if ((origS1.porn >= 0.06f && (origS1.sexy >= 0.018f || origS1.porn >= 0.35f)) ||
-                    textSignal.adultScore >= 0.35f
-                ) {
-                    val cropAction = extractSubCrop224(targetBmp, 0.10f, 0.38f, 0.90f, 0.76f)
-                    val cropCenter = extractSubCrop224(targetBmp, 0.0f, 0.18f, 1.0f, 0.78f)
-                    var cropLower: Bitmap? = null
-                    try {
-                        val actionS1 = inferenceMutex.withLock { runStage1Locked(cropAction) }
-                        val centerS1 = inferenceMutex.withLock { runStage1Locked(cropCenter) }
+                    val maxCropPorn = maxOf(centerS1.porn, actionS1.porn)
+                    val minCropPorn = minOf(centerS1.porn, actionS1.porn)
+                    val maxCropSexy = maxOf(centerS1.sexy, actionS1.sexy)
 
-                        // Fast ROI exit: if Action + Center already confirm >= 0.72 porn, skip 3rd crop
-                        val lowerS1 = if (centerS1.porn >= 0.38f && actionS1.porn >= 0.72f) {
-                            actionS1
-                        } else {
-                            cropLower = extractSubCrop224(targetBmp, 0.15f, 0.45f, 0.85f, 0.82f)
-                            inferenceMutex.withLock { runStage1Locked(cropLower!!) }
+                    val pickAction = (actionS1.porn + 0.5f * actionS1.sexy) > (centerS1.porn + 0.5f * centerS1.sexy)
+                    val candidateS1 = if (pickAction) actionS1 else centerS1
+                    val candidateBmp = if (pickAction) actionCropBmp else centerCropBmp
+
+                    // If the center/action crop shows substantial sexual signal, verify with Stage 2 on that crop
+                    var s2CropNsfw = 0f
+                    if (maxCropPorn >= 0.14f || (maxCropPorn + maxCropSexy) >= 0.28f) {
+                        bestNativeCropBmp = candidateBmp
+                        val s2Crop = secondStageClassifier.classify(candidateBmp)
+                        if (s2Crop.successful) {
+                            s2CropNsfw = s2Crop.nsfwScore
                         }
+                    }
 
-                        val maxActionPorn = maxOf(actionS1.porn, lowerS1.porn)
-                        val maxAllPorn = maxOf(centerS1.porn, actionS1.porn, lowerS1.porn)
-                        val roiConfirmed =
-                            (centerS1.porn >= 0.38f && maxActionPorn >= 0.72f) ||
-                                (textSignal.adultScore >= 0.45f && maxAllPorn >= 0.36f) ||
-                                (textSignal.isExplicitPornDomain && maxAllPorn >= 0.15f)
+                    val nativeRoiConfirmed =
+                        (centerS1.porn >= 0.34f && actionS1.porn >= 0.52f) ||
+                            (maxCropPorn >= 0.62f && (minCropPorn >= 0.18f || origS1.porn >= 0.01f || origS1.sexy >= 0.015f || s2CropNsfw >= 0.35f)) ||
+                            (maxCropPorn >= 0.24f && s2CropNsfw >= 0.48f) ||
+                            ((maxCropPorn + maxCropSexy) >= 0.42f && maxCropPorn >= 0.12f && s2CropNsfw >= 0.52f) ||
+                            (textSignal.adultScore >= 0.35f && (maxCropPorn >= 0.22f || s2CropNsfw >= 0.38f)) ||
+                            (textSignal.isExplicitPornDomain && maxCropPorn >= 0.12f)
 
-                        if (roiConfirmed) {
-                            val bestCropS1 = listOf(centerS1, actionS1, lowerS1)
-                                .maxByOrNull { it.porn + 0.5f * it.sexy } ?: actionS1
-                            if (bestCropS1.porn > effectiveS1.porn) {
-                                effectiveS1 = bestCropS1
+                    if (nativeRoiConfirmed && (candidateS1.porn + 0.5f * candidateS1.sexy) > (effectiveS1.porn + 0.5f * effectiveS1.sexy)) {
+                        effectiveS1 = candidateS1
+                    }
+                } else {
+                    // Fast Safe Short-Circuit (Phase B < 50 ms target when no native ROI crop overrides):
+                    val clearlySafeStage1 =
+                        !illum.isLowLight &&
+                            (origS1.neutral + origS1.drawings) >= 0.85f &&
+                            origS1.porn < 0.055f &&
+                            origS1.sexy < 0.14f &&
+                            textSignal.adultScore < 0.30f &&
+                            !textSignal.isExplicitPornDomain
+
+                    if (clearlySafeStage1) {
+                        val fastMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+                        return@withContext resolveTwoStageTaxonomy(
+                            origS1 = origS1,
+                            effectiveS1 = origS1,
+                            s2 = null,
+                            illum = illum,
+                            preprocessingMode = PreprocessingMode.ORIGINAL,
+                            baselineCategory = baselineResult.predictedCategory,
+                            baselineConfidence = baselineResult.confidence,
+                            durationMs = fastMs,
+                            explicitThreshold = prefs.confidenceThreshold
+                        )
+                    }
+
+                    // Fallback Sub-Crop ROI Visual Scan (for benchmark/static images without HardwareBuffer crops):
+                    if ((origS1.porn >= 0.06f && (origS1.sexy >= 0.018f || origS1.porn >= 0.35f)) ||
+                        textSignal.adultScore >= 0.35f
+                    ) {
+                        val cropAction = extractSubCrop224(targetBmp, 0.10f, 0.38f, 0.90f, 0.76f)
+                        val cropCenter = extractSubCrop224(targetBmp, 0.0f, 0.18f, 1.0f, 0.78f)
+                        var cropLower: Bitmap? = null
+                        try {
+                            val actionS1 = inferenceMutex.withLock { runStage1Locked(cropAction) }
+                            val centerS1 = inferenceMutex.withLock { runStage1Locked(cropCenter) }
+
+                            val lowerS1 = if (centerS1.porn >= 0.38f && actionS1.porn >= 0.72f) {
+                                actionS1
+                            } else {
+                                cropLower = extractSubCrop224(targetBmp, 0.15f, 0.45f, 0.85f, 0.82f)
+                                inferenceMutex.withLock { runStage1Locked(cropLower!!) }
                             }
+
+                            val maxActionPorn = maxOf(actionS1.porn, lowerS1.porn)
+                            val maxAllPorn = maxOf(centerS1.porn, actionS1.porn, lowerS1.porn)
+                            val roiConfirmed =
+                                (centerS1.porn >= 0.38f && maxActionPorn >= 0.72f) ||
+                                    (textSignal.adultScore >= 0.45f && maxAllPorn >= 0.36f) ||
+                                    (textSignal.isExplicitPornDomain && maxAllPorn >= 0.15f)
+
+                            if (roiConfirmed) {
+                                val bestCropS1 = listOf(centerS1, actionS1, lowerS1)
+                                    .maxByOrNull { it.porn + 0.5f * it.sexy } ?: actionS1
+                                if (bestCropS1.porn > effectiveS1.porn) {
+                                    effectiveS1 = bestCropS1
+                                }
+                            }
+                        } finally {
+                            if (!cropCenter.isRecycled) cropCenter.recycle()
+                            if (!cropAction.isRecycled) cropAction.recycle()
+                            cropLower?.let { if (!it.isRecycled) it.recycle() }
                         }
-                    } finally {
-                        if (!cropCenter.isRecycled) cropCenter.recycle()
-                        if (!cropAction.isRecycled) cropAction.recycle()
-                        cropLower?.let { if (!it.isRecycled) it.recycle() }
                     }
                 }
 
@@ -494,6 +551,14 @@ class LiteRtNsfwClassifier(
                 if (shouldRunStage2) {
                     val s2Orig = secondStageClassifier.classify(targetBmp)
                     stage2Res = s2Orig
+
+                    val cropBmp = bestNativeCropBmp
+                    if (cropBmp != null && !cropBmp.isRecycled && effectiveS1 !== origS1) {
+                        val s2Crop = secondStageClassifier.classify(cropBmp)
+                        if (s2Crop.successful && s2Crop.nsfwScore > s2Orig.nsfwScore) {
+                            stage2Res = s2Crop.copy(durationMs = s2Orig.durationMs + s2Crop.durationMs)
+                        }
+                    }
 
                     // If low-light enhancement was applied, also evaluate Stage 2 on the enhanced frame
                     // and require both original and enhanced views to prevent noise-induced false positives.

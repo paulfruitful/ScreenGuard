@@ -14,8 +14,8 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 object DetectionEngine {
     private const val MAX_PENDING_INFERENCE_JOBS = 1
-    private const val DUPLICATE_HASH_MAX_HAMMING_DIST = 2
-    private const val DUPLICATE_CACHE_TTL_MS = 8000L
+    private const val DUPLICATE_HASH_MAX_HAMMING_DIST = 0
+    private const val DUPLICATE_CACHE_TTL_MS = 450L
 
     @Volatile
     private var activeClassifier: ContentClassifier = MockContentClassifier()
@@ -99,7 +99,8 @@ object DetectionEngine {
         downsampledBitmap: Bitmap,
         packageName: String,
         windowId: Int,
-        bypassDuplicateCheck: Boolean = false
+        bypassDuplicateCheck: Boolean = false,
+        nativeRoiCrops: List<Bitmap> = emptyList()
     ): ClassificationResult {
         val prefs = LocalStorage.getPreferences()
 
@@ -125,8 +126,16 @@ object DetectionEngine {
         }
 
         try {
-            // 2. Duplicate-frame detection via 64-bit dHash
-            val frameHash = PerceptualFrameHasher.computeDHash64(downsampledBitmap)
+            // 2. Duplicate-frame detection combining full-screen dHash + center-feed dHash so in-feed
+            // video playback on X/Twitter, Instagram, TikTok, etc. is never mistaken for a static screen.
+            val fullHash = PerceptualFrameHasher.computeDHash64(downsampledBitmap)
+            val centerCrop = nativeRoiCrops.firstOrNull { !it.isRecycled }
+            val centerHash = if (centerCrop != null) {
+                PerceptualFrameHasher.computeDHash64(centerCrop)
+            } else {
+                0L
+            }
+            val frameHash = fullHash xor java.lang.Long.rotateLeft(centerHash, 17)
             val frameHashHex = PerceptualFrameHasher.formatHex(frameHash)
             val nowElapsed = SystemClock.elapsedRealtime()
 
@@ -157,8 +166,14 @@ object DetectionEngine {
                 }
             }
 
-            // 3. Execute real on-device LiteRT inference
-            val rawResult = activeClassifier.classify(downsampledBitmap).copy(
+            // 3. Execute real on-device LiteRT inference (with native-resolution ROI crops when available)
+            val classifier = activeClassifier
+            val rawInference = if (classifier is LiteRtNsfwClassifier && nativeRoiCrops.isNotEmpty()) {
+                classifier.classifyWithNativeCrops(downsampledBitmap, nativeRoiCrops)
+            } else {
+                classifier.classify(downsampledBitmap)
+            }
+            val rawResult = rawInference.copy(
                 frameHash = frameHashHex,
                 frameWidth = downsampledBitmap.width,
                 frameHeight = downsampledBitmap.height,
@@ -200,11 +215,6 @@ object DetectionEngine {
      * shorten the sampling interval so confirmation or clearance happens quickly.
      */
     fun computeRecommendedCooldownMs(baseIntervalMs: Long): Long {
-        val snap = TemporalDecisionEngine.getSnapshot()
-        return when (snap.state) {
-            TemporalProtectionState.PENDING_CONFIRMATION,
-            TemporalProtectionState.UNCERTAIN_MONITORING -> maxOf(1150L, baseIntervalMs / 2L)
-            else -> maxOf(1150L, baseIntervalMs)
-        }
+        return maxOf(1005L, baseIntervalMs)
     }
 }

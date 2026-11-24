@@ -123,13 +123,8 @@ object MultimodalFusionEngine {
             }
             ContentCategory.SUGGESTIVE.name -> {
                 val eff = maxOf(boostedConfidence, v.sexyScore)
-                val trig = (policy.sensitivityMode == ProtectionSensitivityMode.STRICT &&
-                    policy.interveneOnSuggestiveInStrict &&
-                    eff >= policy.suggestiveThresholdStrict) ||
-                    (policy.sensitivityMode == ProtectionSensitivityMode.BALANCED &&
-                        v.pornScore >= 0.14f &&
-                        eff >= 0.58f &&
-                        rawTextBoost >= 0.05f)
+                val trig = policy.interveneOnSuggestiveInStrict &&
+                    eff >= policy.suggestiveThresholdStrict
                 trig to ContentCategory.SUGGESTIVE.name
             }
             ContentCategory.UNCERTAIN.name -> {

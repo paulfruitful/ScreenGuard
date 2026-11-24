@@ -10,10 +10,7 @@ import {
 } from 'react-native';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
 import {colors, radius, spacing, typography} from '../theme/theme';
-import {
-  ProtectionSensitivityMode,
-  UserPreferences,
-} from '../types/screenguard';
+import {UserPreferences} from '../types/screenguard';
 import {getFriendlyAppName} from '../utils/friendlyFormat';
 
 interface SettingsScreenProps {
@@ -24,35 +21,11 @@ interface SettingsScreenProps {
   onOpenOverlaySettings: () => void;
 }
 
-const SENSITIVITY_OPTIONS: {
-  label: string;
-  value: ProtectionSensitivityMode;
-  desc: string;
-}[] = [
-  {
-    label: 'Balanced (Recommended)',
-    value: 'BALANCED',
-    desc: 'Blocks nudity and explicit content while avoiding false alerts on swimwear, fitness, or everyday photos.',
-  },
-  {
-    label: 'Strict',
-    value: 'STRICT',
-    desc: 'Provides extra caution by also blocking suggestive content and borderline scenes.',
-  },
-];
-
 const QUICK_EXCLUDE_CANDIDATES = [
   {pkg: 'com.whatsapp', name: 'WhatsApp'},
   {pkg: 'com.google.android.apps.messaging', name: 'Messages'},
   {pkg: 'com.google.android.gm', name: 'Gmail'},
   {pkg: 'com.android.settings', name: 'Settings'},
-];
-
-const COOLDOWN_OPTIONS = [
-  {label: '10s', value: 10},
-  {label: '12s', value: 12},
-  {label: '15s', value: 15},
-  {label: '30s', value: 30},
 ];
 
 export function SettingsScreen({
@@ -113,7 +86,8 @@ export function SettingsScreen({
             <View style={styles.switchTextCol}>
               <Text style={styles.rowTitle}>Screen Guard Protection</Text>
               <Text style={styles.rowSubtitle}>
-                Automatically hide explicit content across your apps.
+                Automatically hide explicit and inappropriate content across all
+                your apps in Strict mode.
               </Text>
             </View>
             <Switch
@@ -123,93 +97,9 @@ export function SettingsScreen({
               thumbColor="#FFFFFF"
             />
           </View>
-
-          <View style={[styles.switchRow, styles.rowBorderTop]}>
-            <View style={styles.switchTextCol}>
-              <Text style={styles.rowTitle}>
-                Allow "Dismiss for This Screen"
-              </Text>
-              <Text style={styles.rowSubtitle}>
-                Show an option on the shield to temporarily dismiss it.
-              </Text>
-            </View>
-            <Switch
-              value={preferences.allowManualDismiss}
-              onValueChange={val =>
-                onUpdatePreferences({allowManualDismiss: val})
-              }
-              trackColor={{false: colors.borderStrong, true: colors.royalBlue}}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {preferences.allowManualDismiss && (
-            <View style={styles.cooldownWrap}>
-              <Text style={styles.fieldLabel}>Pause Duration After Dismiss</Text>
-              <View style={styles.pillRow}>
-                {COOLDOWN_OPTIONS.map(opt => {
-                  const active =
-                    (preferences.dismissCooldownSeconds || 12) === opt.value;
-                  return (
-                    <Pressable
-                      key={opt.value}
-                      onPress={() =>
-                        onUpdatePreferences({dismissCooldownSeconds: opt.value})
-                      }
-                      style={[styles.pill, active && styles.pillActive]}>
-                      <Text
-                        style={[
-                          styles.pillText,
-                          active && styles.pillTextActive,
-                        ]}>
-                        {opt.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          )}
         </View>
 
-        {/* 2. Sensitivity Level */}
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Sensitivity Level</Text>
-          <Text style={styles.cardSub}>
-            Choose how strict Screen Guard should be when filtering content.
-          </Text>
-
-          {SENSITIVITY_OPTIONS.map(opt => {
-            const active =
-              (preferences.sensitivityMode || 'BALANCED') === opt.value;
-            return (
-              <Pressable
-                key={opt.value}
-                onPress={() => onUpdatePreferences({sensitivityMode: opt.value})}
-                style={[styles.radioCard, active && styles.radioCardActive]}>
-                <View style={styles.radioTop}>
-                  <Text
-                    style={[
-                      styles.radioTitle,
-                      active && {color: colors.royalBlue},
-                    ]}>
-                    {opt.label}
-                  </Text>
-                  <View
-                    style={[
-                      styles.radioDotOuter,
-                      active && styles.radioDotOuterActive,
-                    ]}>
-                    {active && <View style={styles.radioDotInner} />}
-                  </View>
-                </View>
-                <Text style={styles.radioDesc}>{opt.desc}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        {/* 3. Trusted / Excluded Apps */}
+        {/* 2. Trusted / Excluded Apps */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Trusted Apps (Excluded)</Text>
           <Text style={styles.cardSub}>

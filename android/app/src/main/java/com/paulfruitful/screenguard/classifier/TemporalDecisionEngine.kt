@@ -271,19 +271,13 @@ object TemporalDecisionEngine {
                 0L
             }
 
-            val neededFrames = requiredConfirmationFrames.coerceAtLeast(2)
+            val neededFrames = 1
 
             if (isFrameSuspicious) {
                 consecutiveSuspicious++
                 consecutiveSafe = 0
-                val peakSmoothed = maxOf(ewmaExplicit, ewmaNudity, ewmaSexualActivity)
-                val smoothedTrigger = peakSmoothed >= (confidenceThreshold * 0.72f)
-                if (consecutiveSuspicious >= neededFrames && smoothedTrigger) {
-                    currentState = TemporalProtectionState.CONFIRMED_DETECTION
-                    lastConfirmedDetectionElapsedMs = nowElapsed
-                } else {
-                    currentState = TemporalProtectionState.PENDING_CONFIRMATION
-                }
+                currentState = TemporalProtectionState.CONFIRMED_DETECTION
+                lastConfirmedDetectionElapsedMs = nowElapsed
             } else if (isFrameUncertain) {
                 consecutiveSafe = 0
                 if (currentState != TemporalProtectionState.CONFIRMED_DETECTION) {

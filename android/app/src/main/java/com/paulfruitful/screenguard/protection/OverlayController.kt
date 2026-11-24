@@ -472,11 +472,7 @@ class ScreenGuardOverlayController(
         val appName = reason.appLabel.ifBlank { reason.packageName }
         detailMetaText?.text = "Protected in $appName"
 
-        secondaryDismissButton?.visibility = if (reason.allowManualDismiss) {
-            View.VISIBLE
-        } else {
-            View.GONE
-        }
+        secondaryDismissButton?.visibility = View.GONE
     }
 
     private fun runOnMain(block: () -> Unit) {

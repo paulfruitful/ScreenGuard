@@ -17,7 +17,7 @@ export type InterventionBehavior =
   | 'STATUS_NOTIFICATION'
   | 'LOG_ONLY';
 
-export type ProtectionSensitivityMode = 'BALANCED' | 'STRICT';
+export type ProtectionSensitivityMode = 'STRICT';
 
 export type OverlayState =
   | 'HIDDEN'

@@ -268,16 +268,13 @@ export function DashboardScreen({
         )}
       </View>
 
-      {/* Mode Pill Footer */}
-      <Pressable onPress={onNavigateToSettings} style={styles.modeFooter}>
+      {/* Strict Mode Footer */}
+      <View style={styles.modeFooter}>
         <Text style={styles.modeFooterText}>
           Protection Mode:{' '}
-          <Text style={styles.modeFooterHighlight}>
-            {preferences.sensitivityMode === 'STRICT' ? 'Strict' : 'Balanced'}
-          </Text>{' '}
-          · Tap to change
+          <Text style={styles.modeFooterHighlight}>Strict</Text>
         </Text>
-      </Pressable>
+      </View>
     </ScrollView>
   );
 }

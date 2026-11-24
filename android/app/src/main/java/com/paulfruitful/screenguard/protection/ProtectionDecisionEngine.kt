@@ -380,22 +380,13 @@ class ProtectionDecisionEngine {
             }
             ContentCategory.SUGGESTIVE.name -> {
                 val score = maxOf(result.confidence, result.suggestiveScore, result.sexyScore)
-                val isPornAdjacentInBalanced =
-                    policy.sensitivityMode == ProtectionSensitivityMode.BALANCED &&
-                        ((result.pornScore >= 0.12f && score >= 0.55f) || score >= 0.82f)
                 val shouldIntervene =
-                    isPornAdjacentInBalanced ||
-                        (policy.sensitivityMode == ProtectionSensitivityMode.STRICT &&
-                            policy.interveneOnSuggestiveInStrict &&
-                            score >= policy.suggestiveThresholdStrict)
+                    policy.interveneOnSuggestiveInStrict &&
+                        score >= policy.suggestiveThresholdStrict
                 CategoryPolicyEvaluation(
                     violatesPolicy = shouldIntervene,
                     effectiveScore = score,
-                    thresholdUsed = if (policy.sensitivityMode == ProtectionSensitivityMode.STRICT) {
-                        policy.suggestiveThresholdStrict
-                    } else {
-                        0.55f
-                    }
+                    thresholdUsed = policy.suggestiveThresholdStrict
                 )
             }
             ContentCategory.UNCERTAIN.name,

@@ -19,74 +19,53 @@ enum class OverlayState {
 }
 
 /**
- * User-configurable protection sensitivity modes (Section 10):
- * - BALANCED: Intervenes on confirmed NUDITY, SEXUAL_ACTIVITY, and EXPLICIT content.
- *   Never triggers a full-screen intervention on SUGGESTIVE or UNCERTAIN classifications.
- * - STRICT: Applies more conservative thresholds for NUDITY, SEXUAL_ACTIVITY, and EXPLICIT content,
- *   and optionally intervenes on high-confidence confirmed SUGGESTIVE content.
+ * Protection sensitivity mode:
+ * Screen Guard operates exclusively in STRICT mode.
  */
 enum class ProtectionSensitivityMode {
-    BALANCED,
     STRICT;
 
     companion object {
-        fun fromString(raw: String?): ProtectionSensitivityMode {
-            return if (raw.equals("STRICT", ignoreCase = true)) STRICT else BALANCED
-        }
+        fun fromString(raw: String?): ProtectionSensitivityMode = STRICT
     }
 }
 
 /**
- * Category-specific threshold configuration and temporal timing policy (Sections 5 & 6).
+ * Category-specific threshold configuration and temporal timing policy (Strict Mode).
  */
 data class ProtectionPolicyConfig(
-    val sensitivityMode: ProtectionSensitivityMode = ProtectionSensitivityMode.BALANCED,
+    val sensitivityMode: ProtectionSensitivityMode = ProtectionSensitivityMode.STRICT,
     val interveneOnSuggestiveInStrict: Boolean = true,
-    val allowManualDismiss: Boolean = true,
-    val explicitThreshold: Float = 0.55f,
-    val nudityThreshold: Float = 0.35f,
-    val sexualActivityThreshold: Float = 0.36f,
-    val suggestiveThresholdStrict: Float = 0.52f,
+    val allowManualDismiss: Boolean = false,
+    val explicitThreshold: Float = 0.38f,
+    val nudityThreshold: Float = 0.25f,
+    val sexualActivityThreshold: Float = 0.26f,
+    val suggestiveThresholdStrict: Float = 0.46f,
     val confirmationFramesRequired: Int = 1,
     val recoverySafeFramesRequired: Int = 1,
-    val minDisplayDurationMs: Long = 1200L,
-    val dismissCooldownMs: Long = 12_000L
+    val minDisplayDurationMs: Long = 1100L,
+    val dismissCooldownMs: Long = 0L
 ) {
     companion object {
         fun forMode(
-            mode: ProtectionSensitivityMode,
-            baseConfidenceThreshold: Float = 0.60f,
+            mode: ProtectionSensitivityMode = ProtectionSensitivityMode.STRICT,
+            baseConfidenceThreshold: Float = 0.55f,
             confirmationFrames: Int = 1,
-            allowDismiss: Boolean = true
+            allowDismiss: Boolean = false
         ): ProtectionPolicyConfig {
-            return when (mode) {
-                ProtectionSensitivityMode.BALANCED -> ProtectionPolicyConfig(
-                    sensitivityMode = ProtectionSensitivityMode.BALANCED,
-                    interveneOnSuggestiveInStrict = false,
-                    allowManualDismiss = allowDismiss,
-                    explicitThreshold = (baseConfidenceThreshold * 0.80f).coerceIn(0.48f, 0.65f),
-                    nudityThreshold = (baseConfidenceThreshold * 0.50f).coerceIn(0.32f, 0.45f),
-                    sexualActivityThreshold = (baseConfidenceThreshold * 0.52f).coerceIn(0.34f, 0.46f),
-                    suggestiveThresholdStrict = 0.85f,
-                    confirmationFramesRequired = 1,
-                    recoverySafeFramesRequired = 1,
-                    minDisplayDurationMs = 1200L,
-                    dismissCooldownMs = 12_000L
-                )
-                ProtectionSensitivityMode.STRICT -> ProtectionPolicyConfig(
-                    sensitivityMode = ProtectionSensitivityMode.STRICT,
-                    interveneOnSuggestiveInStrict = true,
-                    allowManualDismiss = allowDismiss,
-                    explicitThreshold = (baseConfidenceThreshold * 0.68f).coerceIn(0.40f, 0.55f),
-                    nudityThreshold = (baseConfidenceThreshold * 0.42f).coerceIn(0.26f, 0.38f),
-                    sexualActivityThreshold = (baseConfidenceThreshold * 0.44f).coerceIn(0.28f, 0.40f),
-                    suggestiveThresholdStrict = 0.50f,
-                    confirmationFramesRequired = 1,
-                    recoverySafeFramesRequired = 1,
-                    minDisplayDurationMs = 1300L,
-                    dismissCooldownMs = 15_000L
-                )
-            }
+            return ProtectionPolicyConfig(
+                sensitivityMode = ProtectionSensitivityMode.STRICT,
+                interveneOnSuggestiveInStrict = true,
+                allowManualDismiss = false,
+                explicitThreshold = (baseConfidenceThreshold * 0.65f).coerceIn(0.35f, 0.50f),
+                nudityThreshold = (baseConfidenceThreshold * 0.40f).coerceIn(0.24f, 0.35f),
+                sexualActivityThreshold = (baseConfidenceThreshold * 0.42f).coerceIn(0.25f, 0.36f),
+                suggestiveThresholdStrict = 0.46f,
+                confirmationFramesRequired = 1,
+                recoverySafeFramesRequired = 1,
+                minDisplayDurationMs = 1100L,
+                dismissCooldownMs = 0L
+            )
         }
     }
 }

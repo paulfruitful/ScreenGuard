@@ -69,16 +69,17 @@ object ProtectionCoordinator {
     }
 
     fun buildPolicyConfig(prefs: UserPreferencesData): ProtectionPolicyConfig {
-        val mode = ProtectionSensitivityMode.fromString(prefs.sensitivityMode)
         val baseConfig = ProtectionPolicyConfig.forMode(
-            mode = mode,
+            mode = ProtectionSensitivityMode.STRICT,
             baseConfidenceThreshold = prefs.confidenceThreshold,
-            confirmationFrames = prefs.confirmationFramesRequired,
-            allowDismiss = prefs.allowManualDismiss
+            confirmationFrames = 1,
+            allowDismiss = false
         )
         return baseConfig.copy(
-            interveneOnSuggestiveInStrict = prefs.interveneOnSuggestiveInStrict,
-            dismissCooldownMs = (prefs.dismissCooldownSeconds.coerceIn(3, 120) * 1000L)
+            sensitivityMode = ProtectionSensitivityMode.STRICT,
+            interveneOnSuggestiveInStrict = true,
+            allowManualDismiss = false,
+            dismissCooldownMs = 0L
         )
     }
 

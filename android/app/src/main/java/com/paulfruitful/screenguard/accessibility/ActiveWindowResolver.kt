@@ -88,11 +88,14 @@ object ActiveWindowResolver {
                 isPasswordOrSensitiveInputActive = false
             )
         }
-        val isStateChange = event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-        val resolvedPkg = if (isStateChange || fallbackPackage == "None" || fallbackPackage.isBlank()) {
-            eventPkg
-        } else {
-            fallbackPackage
+        val isSelfMainActivity = eventPkg == SELF_PACKAGE &&
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            (event.className?.toString()?.contains("MainActivity", ignoreCase = true) == true)
+
+        val resolvedPkg = when {
+            eventPkg != SELF_PACKAGE -> eventPkg
+            isSelfMainActivity -> SELF_PACKAGE
+            else -> fallbackPackage
         }
         val resolvedWinId = if (event.windowId >= 0 && eventPkg == resolvedPkg) {
             event.windowId

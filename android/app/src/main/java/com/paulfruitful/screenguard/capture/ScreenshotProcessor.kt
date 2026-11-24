@@ -80,6 +80,8 @@ object ScreenshotProcessor {
 
         var hardwareBitmap: Bitmap? = null
         var softwareClassifierBitmap: Bitmap? = null
+        var centerFeedCropBitmap: Bitmap? = null
+        var actionFeedCropBitmap: Bitmap? = null
         var previewBitmap: Bitmap? = null
 
         var origWidth = 0
@@ -106,11 +108,45 @@ object ScreenshotProcessor {
                         Bitmap.Config.ARGB_8888
                     )
                     BufferReleaseTracker.onBitmapAllocated()
-                    val canvas = Canvas(target224)
-                    val srcRect = Rect(0, 0, origWidth, origHeight)
                     val dstRect = Rect(0, 0, CLASSIFIER_TARGET_SIZE, CLASSIFIER_TARGET_SIZE)
-                    canvas.drawBitmap(wrapped, srcRect, dstRect, scalePaint)
+                    val srcRect = Rect(0, 0, origWidth, origHeight)
+                    Canvas(target224).drawBitmap(wrapped, srcRect, dstRect, scalePaint)
                     softwareClassifierBitmap = target224
+
+                    // Extract native-resolution social-media video/feed ROI crops directly from the
+                    // HardwareBuffer before closing it so in-feed videos on X/Twitter, Instagram,
+                    // TikTok, Facebook, Reddit, and Chrome are not squashed by surrounding UI chrome.
+                    if (origWidth >= 300 && origHeight >= 400) {
+                        val centerCrop = Bitmap.createBitmap(
+                            CLASSIFIER_TARGET_SIZE,
+                            CLASSIFIER_TARGET_SIZE,
+                            Bitmap.Config.ARGB_8888
+                        )
+                        BufferReleaseTracker.onBitmapAllocated()
+                        val centerSrc = Rect(
+                            (origWidth * 0.03f).toInt(),
+                            (origHeight * 0.16f).toInt(),
+                            (origWidth * 0.97f).toInt(),
+                            (origHeight * 0.78f).toInt()
+                        )
+                        Canvas(centerCrop).drawBitmap(wrapped, centerSrc, dstRect, scalePaint)
+                        centerFeedCropBitmap = centerCrop
+
+                        val actionCrop = Bitmap.createBitmap(
+                            CLASSIFIER_TARGET_SIZE,
+                            CLASSIFIER_TARGET_SIZE,
+                            Bitmap.Config.ARGB_8888
+                        )
+                        BufferReleaseTracker.onBitmapAllocated()
+                        val actionSrc = Rect(
+                            (origWidth * 0.08f).toInt(),
+                            (origHeight * 0.30f).toInt(),
+                            (origWidth * 0.92f).toInt(),
+                            (origHeight * 0.78f).toInt()
+                        )
+                        Canvas(actionCrop).drawBitmap(wrapped, actionSrc, dstRect, scalePaint)
+                        actionFeedCropBitmap = actionCrop
+                    }
 
                     if (holdInMemoryPreview) {
                         val ratio = minOf(
@@ -180,11 +216,16 @@ object ScreenshotProcessor {
                 )
             }
 
-            // 2. Run on-device DetectionEngine on the 224x224 software bitmap
+            // 2. Run on-device DetectionEngine on the 224x224 software bitmap + native ROI crops
+            val nativeCrops = buildList {
+                centerFeedCropBitmap?.let { if (!it.isRecycled) add(it) }
+                actionFeedCropBitmap?.let { if (!it.isRecycled) add(it) }
+            }
             val classification = DetectionEngine.evaluateFrame(
                 downsampledBitmap = classifierBmp,
                 packageName = packageName,
-                windowId = windowId
+                windowId = windowId,
+                nativeRoiCrops = nativeCrops
             )
 
             BufferReleaseTracker.recordCaptureSuccess(
@@ -221,7 +262,7 @@ object ScreenshotProcessor {
 
             return@withContext outcome
         } finally {
-            // 3. Unconditionally recycle the 224x224 classifier Bitmap so 0 Bitmaps remain in RAM
+            // 3. Unconditionally recycle all 224x224 classifier Bitmaps so 0 Bitmaps remain in RAM
             softwareClassifierBitmap?.let { bmp ->
                 if (!bmp.isRecycled) {
                     bmp.recycle()
@@ -229,6 +270,22 @@ object ScreenshotProcessor {
                 BufferReleaseTracker.onBitmapRecycled()
             }
             softwareClassifierBitmap = null
+
+            centerFeedCropBitmap?.let { bmp ->
+                if (!bmp.isRecycled) {
+                    bmp.recycle()
+                }
+                BufferReleaseTracker.onBitmapRecycled()
+            }
+            centerFeedCropBitmap = null
+
+            actionFeedCropBitmap?.let { bmp ->
+                if (!bmp.isRecycled) {
+                    bmp.recycle()
+                }
+                BufferReleaseTracker.onBitmapRecycled()
+            }
+            actionFeedCropBitmap = null
         }
     }
 }

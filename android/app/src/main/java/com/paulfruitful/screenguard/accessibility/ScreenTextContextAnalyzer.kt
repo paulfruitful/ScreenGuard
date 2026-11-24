@@ -27,7 +27,7 @@ data class ScreenTextSignal(
  */
 object ScreenTextContextAnalyzer {
 
-    private const val MAX_NODES_TO_SCAN = 48
+    private const val MAX_NODES_TO_SCAN = 64
     private const val MAX_SCAN_BUDGET_MS = 35L
 
     private val EXPLICIT_PORN_DOMAINS = listOf(
@@ -82,6 +82,7 @@ object ScreenTextContextAnalyzer {
         "onlyfans",
         "fansly",
         "shmoodnasty",
+        "sheluvraf",
         "quickie",
         "quickies",
         "sex hits",
@@ -98,6 +99,7 @@ object ScreenTextContextAnalyzer {
         "boobs",
         "tits",
         "uncensored",
+        "leaked",
         "horny",
         "freaky",
         "naughty",
