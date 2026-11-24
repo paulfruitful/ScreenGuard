@@ -121,6 +121,27 @@ object AccessibilityScreenshotCapturer {
                     return outcome
                 }
 
+                // If takeScreenshotOfWindow failed with INTERVAL_TIME_SHORT, wait 1020ms and retry
+                // takeScreenshotOfWindow once before falling back to display capture!
+                if (windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                    delay(1020L)
+                    lastScreenshotRequestElapsedMs.set(SystemClock.elapsedRealtime())
+                    val retryWindow = withTimeoutOrNull(1500L) {
+                        requestWindowScreenshot(service, windowId)
+                    }
+                    if (retryWindow?.result != null) {
+                        ServiceHealthMonitor.onCaptureSuccess(usedWindowApi = true)
+                        return ScreenshotProcessor.processScreenshotResult(
+                            screenshotResult = retryWindow.result,
+                            captureStartedElapsedNs = startNs,
+                            captureMethod = "takeScreenshotOfWindow($windowId)",
+                            packageName = packageName,
+                            windowId = windowId,
+                            holdInMemoryPreview = holdInMemoryPreview
+                        )
+                    }
+                }
+
                 val errStr = mapErrorCodeToString(windowAttempt.errorCode)
                 ServiceHealthMonitor.onCaptureFailure(errStr, usedWindowApi = true, windowId = windowId)
                 val shouldFallbackToDisplay =
@@ -148,6 +169,11 @@ object AccessibilityScreenshotCapturer {
                         errStr
                     )
                 }
+                // Android system_server resets its 1000ms screenshot rate limit clock even when
+                // takeScreenshotOfWindow fails; wait 1020ms so the display fallback isn't rejected
+                // with INTERVAL_TIME_SHORT.
+                delay(1020L)
+                lastScreenshotRequestElapsedMs.set(SystemClock.elapsedRealtime())
             }
 
             // Display-level screenshot (fast primary path when overlay is hidden, or fallback when overlay is visible)

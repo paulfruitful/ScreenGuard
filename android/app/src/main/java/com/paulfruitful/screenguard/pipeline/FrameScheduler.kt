@@ -1,11 +1,15 @@
 package com.paulfruitful.screenguard.pipeline
 
 import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -44,6 +48,9 @@ class FrameScheduler(
     private var started = false
 
     @Volatile
+    private var workerJob: Job? = null
+
+    @Volatile
     var isFrameInFlight: Boolean = false
         private set
 
@@ -52,60 +59,75 @@ class FrameScheduler(
         private set
 
     fun start() {
-        if (!running.compareAndSet(false, true)) return
+        if (workerJob?.isActive == true && running.get()) return
+        running.set(true)
         started = true
-        scope.launch {
-            for (first in requests) {
-                var trigger = first
-                // 1. Settle (once). Newer requests simply replace the pending one in the channel.
-                if (trigger.settleMs > 0) delay(trigger.settleMs)
+        workerJob?.cancel()
+        workerJob = scope.launch {
+            try {
+                for (first in requests) {
+                    if (!isActive || !running.get()) break
+                    var trigger = first
+                    // 1. Settle (once). Newer requests simply replace the pending one in the channel.
+                    if (trigger.settleMs > 0) delay(trigger.settleMs)
 
-                // 2. Take the newest request that arrived while settling (latest wins).
-                while (true) {
-                    val newer = requests.tryReceive().getOrNull() ?: break
-                    PipelineTelemetry.recordObsoleteTriggerDropped()
-                    trigger = FrameTrigger(
-                        eventAtNs = minOf(trigger.eventAtNs, newer.eventAtNs),
-                        settleMs = 0L,
-                        minIntervalMs = minOf(trigger.minIntervalMs, newer.minIntervalMs),
-                        isAppSwitch = trigger.isAppSwitch || newer.isAppSwitch
-                    )
-                }
-
-                // 3. Respect the minimum interval between frame starts (Android enforces ~1s).
-                val sinceLast = SystemClock.elapsedRealtime() - lastFrameStartElapsedMs
-                if (sinceLast < trigger.minIntervalMs) delay(trigger.minIntervalMs - sinceLast)
-
-                lastFrameStartElapsedMs = SystemClock.elapsedRealtime()
-                lastFrameStartedAtElapsedMs = lastFrameStartElapsedMs
-                isFrameInFlight = true
-                try {
-                    withTimeout(frameTimeoutMs) { runFrame(trigger) }
-                } catch (_: TimeoutCancellationException) {
-                    onFrameTimeout()
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    if (!running.get()) {
-                        throw e
+                    // 2. Take the newest request that arrived while settling (latest wins).
+                    while (true) {
+                        val newer = requests.tryReceive().getOrNull() ?: break
+                        PipelineTelemetry.recordObsoleteTriggerDropped()
+                        trigger = FrameTrigger(
+                            eventAtNs = minOf(trigger.eventAtNs, newer.eventAtNs),
+                            settleMs = 0L,
+                            minIntervalMs = minOf(trigger.minIntervalMs, newer.minIntervalMs),
+                            isAppSwitch = trigger.isAppSwitch || newer.isAppSwitch
+                        )
                     }
-                    // Inner coroutine timeout or frame cancellation — never terminate the scheduler loop!
-                    onFrameTimeout()
-                } catch (_: Throwable) {
-                    // A single failing frame must never kill the scheduler loop.
-                } finally {
-                    isFrameInFlight = false
+
+                    // 3. Respect the minimum interval between frame starts (Android enforces ~1s).
+                    val sinceLast = SystemClock.elapsedRealtime() - lastFrameStartElapsedMs
+                    if (sinceLast < trigger.minIntervalMs) delay(trigger.minIntervalMs - sinceLast)
+
+                    lastFrameStartElapsedMs = SystemClock.elapsedRealtime()
+                    lastFrameStartedAtElapsedMs = lastFrameStartElapsedMs
+                    isFrameInFlight = true
+                    try {
+                        supervisorScope {
+                            withTimeout(frameTimeoutMs) { runFrame(trigger) }
+                        }
+                    } catch (_: TimeoutCancellationException) {
+                        Log.w("SG_PIPELINE", "FrameScheduler timeout after ${frameTimeoutMs}ms")
+                        onFrameTimeout()
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        if (!running.get() || !isActive) {
+                            throw e
+                        }
+                        onFrameTimeout()
+                    } catch (t: Throwable) {
+                        Log.w("SG_PIPELINE", "FrameScheduler frame error: ${t.javaClass.simpleName}: ${t.message}")
+                    } finally {
+                        isFrameInFlight = false
+                    }
                 }
+            } finally {
+                isFrameInFlight = false
+                running.set(false)
+                started = false
             }
         }
     }
 
     fun request(trigger: FrameTrigger) {
-        if (!started) start()
+        if (!started || workerJob?.isActive != true) {
+            start()
+        }
         requests.trySend(trigger)
     }
 
     fun stop() {
         running.set(false)
         started = false
+        workerJob?.cancel()
+        workerJob = null
         // Drain any pending trigger.
         while (requests.tryReceive().getOrNull() != null) {
             // discard

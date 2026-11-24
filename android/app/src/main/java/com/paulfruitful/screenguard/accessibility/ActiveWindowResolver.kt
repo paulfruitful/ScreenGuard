@@ -46,8 +46,23 @@ object ActiveWindowResolver {
         "com.google.android.inputmethod.latin",
         "com.samsung.android.honeyboard",
         "com.sec.android.inputmethod",
-        "com.miui.securityinputmethod"
+        "com.miui.securityinputmethod",
+        "com.mi.globalminusscreen",
+        "com.mi.appfinder"
     )
+
+    private val LAUNCHER_PACKAGES = setOf(
+        "com.miui.home",
+        "com.sec.android.app.launcher",
+        "com.google.android.apps.nexuslauncher",
+        "com.android.launcher3"
+    )
+
+    fun isLauncherPackage(packageName: String?): Boolean {
+        if (packageName.isNullOrBlank()) return false
+        if (LAUNCHER_PACKAGES.contains(packageName)) return true
+        return packageName.contains("launcher", ignoreCase = true)
+    }
 
     fun isTransientSystemOverlay(packageName: String?): Boolean {
         if (packageName.isNullOrBlank()) return true
@@ -100,10 +115,32 @@ object ActiveWindowResolver {
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             (event.className?.toString()?.contains("MainActivity", ignoreCase = true) == true)
 
-        val resolvedPkg = when {
-            eventPkg != SELF_PACKAGE -> eventPkg
-            isSelfMainActivity -> SELF_PACKAGE
-            else -> fallbackPackage
+        // Prevent background Xiaomi launcher (`com.miui.home`) or Google Discover minus-one pane
+        // (`com.google.android.googlequicksearchbox`) from hijacking foreground state via background
+        // TYPE_WINDOW_CONTENT_CHANGED events while the user is actively inside X/Twitter or Instagram!
+        val isExplicitForegroundTransition =
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED
+        val isFallbackUnsetOrLauncher =
+            fallbackPackage.isBlank() ||
+                fallbackPackage == "None" ||
+                fallbackPackage == SELF_PACKAGE ||
+                isLauncherPackage(fallbackPackage)
+
+        val canSwitchToEventPkg = when {
+            eventPkg == fallbackPackage -> true
+            eventPkg == SELF_PACKAGE -> isSelfMainActivity
+            isLauncherPackage(eventPkg) -> event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            eventPkg == "com.google.android.googlequicksearchbox" -> event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            isFallbackUnsetOrLauncher -> true
+            isExplicitForegroundTransition -> true
+            else -> false
+        }
+
+        val resolvedPkg = if (canSwitchToEventPkg) {
+            eventPkg
+        } else {
+            fallbackPackage
         }
         val resolvedWinId = if (event.windowId >= 0 && eventPkg == resolvedPkg) {
             event.windowId

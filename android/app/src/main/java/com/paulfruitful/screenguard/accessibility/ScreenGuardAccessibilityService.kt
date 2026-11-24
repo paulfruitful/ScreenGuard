@@ -373,7 +373,11 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         if (!prefs.protectionEnabled) return
         if (ProtectionCoordinator.isOverlayVisible()) return
         val activePkg = currentForegroundPackage
-        if (activePkg.isBlank() || activePkg == "None" || activePkg == SELF_PACKAGE) return
+        if (activePkg.isBlank() ||
+            activePkg == "None" ||
+            activePkg == SELF_PACKAGE ||
+            ActiveWindowResolver.isLauncherPackage(activePkg)
+        ) return
         if (prefs.excludedPackages.contains(activePkg)) return
 
         val settleMs = if (isAppChanged) {
@@ -517,6 +521,18 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         val captureStartNs = PipelineTelemetry.nowNs()
         val eventToCaptureStartMs = PipelineTelemetry.msBetween(originEventAtNs, captureStartNs)
 
+        // Refresh active application windowId from in-parcel service.windows (< 0.2 ms, zero node IPC)
+        // so sub-window IDs in X/Twitter or Instagram never pass an uncapturable sub-window ID.
+        val fastWin = ActiveWindowResolver.resolve(
+            service = this,
+            event = null,
+            fallbackPackage = currentForegroundPackage,
+            fallbackWindowId = currentWindowId
+        )
+        if (fastWin.windowId >= 0) {
+            currentWindowId = fastWin.windowId
+        }
+
         val outcome = AccessibilityScreenshotCapturer.captureAndProcess(
             service = this,
             windowId = currentWindowId,
@@ -642,6 +658,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 }
 
                 val confPct = "%.1f".format(effectiveClassification.confidence * 100f)
+                android.util.Log.i(
+                    "SG_PIPELINE",
+                    "pkg=${outcome.packageName} win=${outcome.windowId} method=${outcome.captureMethod} cat=${effectiveClassification.predictedCategory} conf=$confPct% porn=${"%.2f".format(effectiveClassification.pornScore)} sexy=${"%.2f".format(effectiveClassification.sexyScore)} s2=${"%.2f".format(effectiveClassification.stage2NsfwScore)} shield=${decision.shouldShowOverlay} state=${decision.targetOverlayState}"
+                )
                 LocalStorage.appendActivityLog(
                     applicationContext,
                     ActivityLogRecord(
@@ -688,6 +708,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             }
         } else {
             lastScreenshotStatus = "FAILURE"
+            android.util.Log.w(
+                "SG_PIPELINE",
+                "CAPTURE_FAIL pkg=${outcome.packageName} win=${outcome.windowId} method=${outcome.captureMethod} err=${outcome.errorCode}"
+            )
             EventBridge.emitScreenshotFailure(
                 errorCode = outcome.errorCode,
                 captureMethod = outcome.captureMethod,
@@ -743,9 +767,9 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
-        if (::frameScheduler.isInitialized) {
-            frameScheduler.stop()
-        }
+        // Do NOT stop frameScheduler on transient accessibility interruptions; Android does not
+        // re-call onServiceConnected() after onInterrupt(), so stopping the scheduler here
+        // would leave frame processing paused until the next event.
         if (::eventDebouncer.isInitialized) {
             eventDebouncer.cancelAll()
         }
