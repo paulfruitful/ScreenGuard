@@ -83,9 +83,13 @@ class FrameScheduler(
                     withTimeout(frameTimeoutMs) { runFrame(trigger) }
                 } catch (_: TimeoutCancellationException) {
                     onFrameTimeout()
-                } catch (_: kotlinx.coroutines.CancellationException) {
-                    throw kotlinx.coroutines.CancellationException("scheduler cancelled")
-                } catch (_: Exception) {
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    if (!running.get()) {
+                        throw e
+                    }
+                    // Inner coroutine timeout or frame cancellation — never terminate the scheduler loop!
+                    onFrameTimeout()
+                } catch (_: Throwable) {
                     // A single failing frame must never kill the scheduler loop.
                 } finally {
                     isFrameInFlight = false

@@ -84,14 +84,11 @@ object AccessibilityScreenshotCapturer {
             val startNs = SystemClock.elapsedRealtimeNanos()
             val overlayWasVisible = ProtectionCoordinator.isOverlayVisible()
 
-            // When the protective overlay is visible, prefer per-window capture of the underlying app
-            // so the shield stays 100% solid without blinking. When the overlay is hidden, prefer
-            // SurfaceFlinger display capture (`takeScreenshot(DEFAULT_DISPLAY)`) so hardware-accelerated
-            // video surfaces (SurfaceView/ExoPlayer) and media lightboxes on X/Twitter, Instagram, TikTok,
-            // and third-party apps are always composited on the very first attempt.
+            // Prefer Android 14+ per-window hardware capture (`takeScreenshotOfWindow`) whenever a valid
+            // windowId is available (completes in ~24-38ms on Xiaomi HyperOS Android 16 for X/Twitter,
+            // Instagram, Chrome, and YouTube), with automatic fallback to `takeScreenshot(DEFAULT_DISPLAY)`.
             val canUseWindowApi = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
                 preferWindowCapture &&
-                overlayWasVisible &&
                 windowId >= 0 &&
                 !ServiceHealthMonitor.shouldBypassWindowCapture(windowId)
 

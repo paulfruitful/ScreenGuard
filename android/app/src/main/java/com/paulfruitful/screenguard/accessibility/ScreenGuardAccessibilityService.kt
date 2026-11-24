@@ -394,38 +394,48 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         ServiceHealthMonitor.checkMemoryPressureAndPurgeIfNeeded()
 
         val prefs = LocalStorage.getPreferences(applicationContext)
-        // Background worker window resolution (safe off main thread)
-        val resolved = ActiveWindowResolver.resolve(
-            service = this,
-            event = null,
-            fallbackPackage = currentForegroundPackage,
-            fallbackWindowId = currentWindowId
-        )
 
-        if (resolved.packageName.isNotBlank() && resolved.packageName != "None") {
-            currentForegroundPackage = resolved.packageName
-            currentForegroundAppLabel = resolved.appLabel
-            currentWindowId = resolved.windowId
-        }
-
-        if (resolved.isPasswordOrSensitiveInputActive) {
-            val outcome = ProcessedScreenshotOutcome(
-                succeeded = false,
-                originalWidth = 0,
-                originalHeight = 0,
-                processedWidth = 0,
-                processedHeight = 0,
-                captureDurationMs = 0L,
-                processingDurationMs = 0L,
-                captureMethod = "PRIVACY_GUARD",
-                packageName = currentForegroundPackage,
-                windowId = currentWindowId,
-                errorCode = "PASSWORD_INPUT_ACTIVE",
-                classificationResult = null,
-                debugPreviewBase64 = null
+        // Only query ActiveWindowResolver over Binder IPC when we don't already have a valid
+        // inline packageName/windowId from onAccessibilityEvent, or when the overlay is visible.
+        // This prevents a busy video-player thread in X/Twitter or Instagram from blocking
+        // screenshot capture for 5 seconds inside AccessibilityInteractionClient.waitForResultTimedLocked!
+        if (currentForegroundPackage.isBlank() ||
+            currentForegroundPackage == "None" ||
+            currentWindowId < 0 ||
+            ProtectionCoordinator.isOverlayVisible()
+        ) {
+            val resolved = ActiveWindowResolver.resolve(
+                service = this,
+                event = null,
+                fallbackPackage = currentForegroundPackage,
+                fallbackWindowId = currentWindowId
             )
-            handlePipelineOutcome(outcome, originEventAtNs, 0L)
-            return outcome
+
+            if (resolved.packageName.isNotBlank() && resolved.packageName != "None") {
+                currentForegroundPackage = resolved.packageName
+                currentForegroundAppLabel = resolved.appLabel
+                currentWindowId = resolved.windowId
+            }
+
+            if (resolved.isPasswordOrSensitiveInputActive) {
+                val outcome = ProcessedScreenshotOutcome(
+                    succeeded = false,
+                    originalWidth = 0,
+                    originalHeight = 0,
+                    processedWidth = 0,
+                    processedHeight = 0,
+                    captureDurationMs = 0L,
+                    processingDurationMs = 0L,
+                    captureMethod = "PRIVACY_GUARD",
+                    packageName = currentForegroundPackage,
+                    windowId = currentWindowId,
+                    errorCode = "PASSWORD_INPUT_ACTIVE",
+                    classificationResult = null,
+                    debugPreviewBase64 = null
+                )
+                handlePipelineOutcome(outcome, originEventAtNs, 0L)
+                return outcome
+            }
         }
 
         if (!bypassSelfExclusion && currentForegroundPackage == SELF_PACKAGE) {
@@ -446,53 +456,45 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             )
         }
 
-        // 1. Off-main-thread Caption & URL Node Extraction (bounded to <= 35 ms)
-        val textSignal = ScreenTextContextAnalyzer.analyzeActiveApplicationWindow(
-            service = this,
-            targetPackageName = currentForegroundPackage
-        )
-
-        // Fast-path: If browser URL bar explicitly matches a known porn domain and overlay is not yet visible
-        if (textSignal.isExplicitPornDomain &&
-            !textSignal.isBenignEducationalOrDialogue &&
-            !ProtectionCoordinator.isOverlayVisible()
-        ) {
-            val instantResult = ClassificationResult(
-                scores = mapOf("EXPLICIT" to 0.96f, "porn" to 0.96f),
-                predictedCategory = ContentCategory.EXPLICIT.name,
-                confidence = 0.96f,
-                processingDurationMs = textSignal.scanDurationMs.coerceAtLeast(1L),
-                modelVersion = "multimodal-domain-fastpath",
-                successful = true,
-                isExplicit = true,
-                explicitScore = 0.96f,
-                pornScore = 0.96f,
-                safeScore = 0.04f,
-                consecutiveDetections = 1,
-                confirmedIntervention = true,
-                temporalState = "CONFIRMED_DETECTION",
-                smoothedExplicitScore = 0.96f,
-                packageName = currentForegroundPackage,
-                windowId = currentWindowId
-            )
-            val fastOutcome = ProcessedScreenshotOutcome(
-                succeeded = true,
-                originalWidth = 1080,
-                originalHeight = 2400,
-                processedWidth = 224,
-                processedHeight = 224,
-                captureDurationMs = 1L,
-                preprocessDurationMs = 1L,
-                processingDurationMs = textSignal.scanDurationMs.coerceAtLeast(1L),
-                captureMethod = "CAPTION_DOMAIN_FASTPATH",
-                packageName = currentForegroundPackage,
-                windowId = currentWindowId,
-                errorCode = "NONE",
-                classificationResult = instantResult,
-                debugPreviewBase64 = null
-            )
-            handlePipelineOutcome(fastOutcome, originEventAtNs, 0L)
-            return fastOutcome
+        // Launch non-blocking background text analysis concurrently so slow AccessibilityNodeInfo
+        // trees in video players NEVER delay screenshot capture!
+        val activePkgForText = currentForegroundPackage
+        serviceScope.launch {
+            try {
+                val sig = ScreenTextContextAnalyzer.analyzeActiveApplicationWindow(
+                    service = this@ScreenGuardAccessibilityService,
+                    targetPackageName = activePkgForText
+                )
+                if (sig.isExplicitPornDomain &&
+                    !sig.isBenignEducationalOrDialogue &&
+                    !ProtectionCoordinator.isOverlayVisible()
+                ) {
+                    val instantResult = ClassificationResult(
+                        scores = mapOf("EXPLICIT" to 0.96f, "porn" to 0.96f),
+                        predictedCategory = ContentCategory.EXPLICIT.name,
+                        confidence = 0.96f,
+                        processingDurationMs = sig.scanDurationMs.coerceAtLeast(1L),
+                        modelVersion = "multimodal-domain-fastpath",
+                        successful = true,
+                        isExplicit = true,
+                        explicitScore = 0.96f,
+                        pornScore = 0.96f,
+                        safeScore = 0.04f,
+                        consecutiveDetections = 1,
+                        confirmedIntervention = true,
+                        temporalState = "CONFIRMED_DETECTION",
+                        smoothedExplicitScore = 0.96f,
+                        packageName = activePkgForText,
+                        windowId = currentWindowId
+                    )
+                    ProtectionCoordinator.onClassificationResult(
+                        context = applicationContext,
+                        result = instantResult,
+                        appLabel = currentForegroundAppLabel
+                    )
+                }
+            } catch (_: Exception) {
+            }
         }
 
         val captureStartNs = PipelineTelemetry.nowNs()
@@ -814,29 +816,40 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                     val elapsedSinceCapture = System.currentTimeMillis() - lastScreenshotTimestamp
                     if (elapsedSinceCapture < 1005L) continue
 
-                    val resolved = ActiveWindowResolver.resolve(
-                        service = this@ScreenGuardAccessibilityService,
-                        event = null,
-                        fallbackPackage = currentForegroundPackage,
-                        fallbackWindowId = currentWindowId
-                    )
-                    val pkg = resolved.packageName
-                    if (pkg.isBlank() || pkg == "None" || pkg == SELF_PACKAGE) continue
-                    if (prefs.excludedPackages.contains(pkg)) continue
-
-                    if (pkg != currentForegroundPackage) {
-                        currentForegroundPackage = pkg
-                        currentForegroundAppLabel = resolved.appLabel
-                        currentWindowId = resolved.windowId
-                        DetectionEngine.onForegroundPackageChanged(pkg)
-                        ProtectionCoordinator.onForegroundAppChanged(
-                            context = applicationContext,
-                            newPackageName = pkg,
-                            newAppLabel = resolved.appLabel,
-                            windowId = resolved.windowId
+                    // Only use slow Binder IPC window resolution when we don't know the foreground app
+                    // or when the protective overlay is visible (and covers the screen).
+                    if (currentForegroundPackage.isBlank() ||
+                        currentForegroundPackage == "None" ||
+                        currentWindowId < 0 ||
+                        ProtectionCoordinator.isOverlayVisible()
+                    ) {
+                        val resolved = ActiveWindowResolver.resolve(
+                            service = this@ScreenGuardAccessibilityService,
+                            event = null,
+                            fallbackPackage = currentForegroundPackage,
+                            fallbackWindowId = currentWindowId
                         )
+                        val pkg = resolved.packageName
+                        if (pkg.isBlank() || pkg == "None" || pkg == SELF_PACKAGE) continue
+                        if (prefs.excludedPackages.contains(pkg)) continue
+
+                        if (pkg != currentForegroundPackage) {
+                            currentForegroundPackage = pkg
+                            currentForegroundAppLabel = resolved.appLabel
+                            currentWindowId = resolved.windowId
+                            DetectionEngine.onForegroundPackageChanged(pkg)
+                            ProtectionCoordinator.onForegroundAppChanged(
+                                context = applicationContext,
+                                newPackageName = pkg,
+                                newAppLabel = resolved.appLabel,
+                                windowId = resolved.windowId
+                            )
+                        } else if (resolved.windowId >= 0) {
+                            currentWindowId = resolved.windowId
+                        }
                     } else {
-                        currentWindowId = resolved.windowId
+                        val pkg = currentForegroundPackage
+                        if (pkg == SELF_PACKAGE || prefs.excludedPackages.contains(pkg)) continue
                     }
 
                     frameScheduler.request(
