@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Build
 import android.os.SystemClock
 import android.view.Display
+import com.paulfruitful.screenguard.accessibility.ServiceHealthMonitor
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.LocalStorage
 import kotlinx.coroutines.delay
@@ -84,7 +85,8 @@ object AccessibilityScreenshotCapturer {
 
             val canUseWindowApi = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
                 preferWindowCapture &&
-                windowId >= 0
+                windowId >= 0 &&
+                !ServiceHealthMonitor.shouldBypassWindowCapture(windowId)
 
             if (canUseWindowApi) {
                 val windowAttempt = withTimeoutOrNull(2000L) {
@@ -94,6 +96,7 @@ object AccessibilityScreenshotCapturer {
                     AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW
                 )
                 if (windowAttempt.result != null) {
+                    ServiceHealthMonitor.onCaptureSuccess(usedWindowApi = true)
                     val outcome = ScreenshotProcessor.processScreenshotResult(
                         screenshotResult = windowAttempt.result,
                         captureStartedElapsedNs = startNs,
@@ -118,6 +121,7 @@ object AccessibilityScreenshotCapturer {
                 // surface compositing returned INTERNAL_ERROR, fall back once to display-level
                 // takeScreenshot(DEFAULT_DISPLAY) (never bypassing SECURE_WINDOW).
                 val errStr = mapErrorCodeToString(windowAttempt.errorCode)
+                ServiceHealthMonitor.onCaptureFailure(errStr, usedWindowApi = true, windowId = windowId)
                 val shouldFallbackToDisplay =
                     windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INVALID_WINDOW ||
                         windowAttempt.errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR
@@ -169,6 +173,7 @@ object AccessibilityScreenshotCapturer {
                 }
             }
             if (displayAttempt.result != null) {
+                ServiceHealthMonitor.onCaptureSuccess(usedWindowApi = false)
                 val outcome = ScreenshotProcessor.processScreenshotResult(
                     screenshotResult = displayAttempt.result,
                     captureStartedElapsedNs = startNs,
@@ -189,6 +194,7 @@ object AccessibilityScreenshotCapturer {
                 return outcome
             } else {
                 val errStr = mapErrorCodeToString(displayAttempt.errorCode)
+                ServiceHealthMonitor.onCaptureFailure(errStr, usedWindowApi = false, windowId = windowId)
                 BufferReleaseTracker.recordCaptureFailure(displayMethod, errStr)
                 LocalStorage.recordAutomaticCompatibilityOutcome(
                     packageName = packageName,

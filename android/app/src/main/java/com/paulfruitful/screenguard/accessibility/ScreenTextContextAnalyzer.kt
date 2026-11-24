@@ -1,30 +1,34 @@
 package com.paulfruitful.screenguard.accessibility
 
 import android.accessibilityservice.AccessibilityService
+import android.os.Looper
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 
 data class ScreenTextSignal(
+    val hasVisibleText: Boolean = false,
     val adultScore: Float = 0f,
+    val hardcoreScore: Float = 0f,
     val isExplicitPornDomain: Boolean = false,
-    val matchedIndicators: List<String> = emptyList()
+    val fromSubtitleNode: Boolean = false,
+    val isBenignEducationalOrDialogue: Boolean = false,
+    val matchedIndicators: List<String> = emptyList(),
+    val scanDurationMs: Long = 0L
 )
 
 /**
- * Fast, privacy-preserving on-screen text and URL context analyzer.
+ * Fast, bounded, privacy-preserving on-screen text, subtitle node, and URL context analyzer.
  *
- * Inspects visible UI labels, video captions, account handles, and browser URL bars
- * in the underlying [AccessibilityWindowInfo.TYPE_APPLICATION] window to help identify
- * explicit or pornographic videos/pages immediately.
- *
- * Privacy guarantees:
- * - Never reads password nodes (`node.isPassword == true`).
- * - Never reads focused editable text inputs (`node.isEditable && node.isFocused`).
- * - Never stores or transmits raw screen text.
+ * CRITICAL RELIABILITY INVARIANT (Phase A Root-Cause Fix):
+ * - NEVER executes `service.windows` or `AccessibilityWindowInfo.getRoot()` on the Main UI Thread
+ *   (`Looper.getMainLooper()`). All Binder IPC node traversal is strictly restricted to the
+ *   background worker thread and bounded by [MAX_SCAN_BUDGET_MS] (35 ms) and [MAX_NODES_TO_SCAN] (48).
  */
 object ScreenTextContextAnalyzer {
 
-    private const val MAX_NODES_TO_SCAN = 110
+    private const val MAX_NODES_TO_SCAN = 48
+    private const val MAX_SCAN_BUDGET_MS = 35L
 
     private val EXPLICIT_PORN_DOMAINS = listOf(
         "pornhub.",
@@ -100,6 +104,25 @@ object ScreenTextContextAnalyzer {
         "thirst trap"
     )
 
+    private val BENIGN_EDUCATIONAL_OR_DIALOGUE_TERMS = listOf(
+        "sex education",
+        "sexual health",
+        "reproductive health",
+        "breast cancer",
+        "breastfeeding",
+        "maternal",
+        "anatomy",
+        "medical",
+        "wikipedia",
+        "dictionary",
+        "biology",
+        "gender:",
+        "biological sex",
+        "pregnancy",
+        "pediatric",
+        "dermatology"
+    )
+
     @Volatile
     private var latestSignal: ScreenTextSignal = ScreenTextSignal()
 
@@ -109,33 +132,66 @@ object ScreenTextContextAnalyzer {
         service: AccessibilityService,
         targetPackageName: String
     ): ScreenTextSignal {
+        // Phase A Guard: Refuse to perform Binder IPC window/node traversal on the main thread
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return latestSignal
+        }
+
+        val startNs = SystemClock.elapsedRealtimeNanos()
+        val deadlineElapsedMs = SystemClock.elapsedRealtime() + MAX_SCAN_BUDGET_MS
+
         try {
             val root = findApplicationWindowRoot(service, targetPackageName)
-                ?: return ScreenTextSignal().also { latestSignal = it }
+            if (root == null) {
+                val empty = ScreenTextSignal(
+                    scanDurationMs = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000L)
+                )
+                latestSignal = empty
+                return empty
+            }
 
             val sb = StringBuilder(512)
             var visited = 0
-            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            var subtitleNodeFound = false
+            val queue = ArrayDeque<AccessibilityNodeInfo>(MAX_NODES_TO_SCAN)
             queue.add(root)
 
-            while (queue.isNotEmpty() && visited < MAX_NODES_TO_SCAN) {
+            while (queue.isNotEmpty() &&
+                visited < MAX_NODES_TO_SCAN &&
+                SystemClock.elapsedRealtime() < deadlineElapsedMs
+            ) {
                 val node = queue.removeFirst()
                 visited++
 
                 if (!node.isPassword && !(node.isEditable && node.isFocused)) {
+                    val viewId = try {
+                        node.viewIdResourceName ?: ""
+                    } catch (_: Exception) {
+                        ""
+                    }
+                    if (viewId.contains("subtitle", ignoreCase = true) ||
+                        viewId.contains("caption", ignoreCase = true) ||
+                        viewId.contains("cues", ignoreCase = true)
+                    ) {
+                        subtitleNodeFound = true
+                    }
+
                     val text = node.text
-                    if (!text.isNullOrBlank() && text.length <= 240) {
+                    if (!text.isNullOrBlank() && text.length <= 220) {
                         sb.append(text).append(' ')
                     }
                     val desc = node.contentDescription
-                    if (!desc.isNullOrBlank() && desc.length <= 160) {
+                    if (!desc.isNullOrBlank() && desc.length <= 140) {
                         sb.append(desc).append(' ')
                     }
                 }
 
-                val childCount = node.childCount
+                if (SystemClock.elapsedRealtime() >= deadlineElapsedMs) break
+
+                val childCount = minOf(node.childCount, 8)
                 for (i in 0 until childCount) {
                     if (visited + queue.size >= MAX_NODES_TO_SCAN) break
+                    if (SystemClock.elapsedRealtime() >= deadlineElapsedMs) break
                     val child = try {
                         node.getChild(i)
                     } catch (_: Exception) {
@@ -147,26 +203,40 @@ object ScreenTextContextAnalyzer {
                 }
             }
 
+            val durMs = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000L)
             val combinedLower = sb.toString().lowercase()
             if (combinedLower.isBlank()) {
-                return ScreenTextSignal().also { latestSignal = it }
+                val empty = ScreenTextSignal(hasVisibleText = false, scanDurationMs = durMs)
+                latestSignal = empty
+                return empty
             }
 
             val matched = mutableListOf<String>()
             var isPornDomain = false
-            var score = 0f
+            var hardcoreScore = 0f
+            var adultScore = 0f
+            var isBenignEducational = false
+
+            for (benign in BENIGN_EDUCATIONAL_OR_DIALOGUE_TERMS) {
+                if (combinedLower.contains(benign)) {
+                    isBenignEducational = true
+                    break
+                }
+            }
 
             for (domain in EXPLICIT_PORN_DOMAINS) {
                 if (combinedLower.contains(domain)) {
                     isPornDomain = true
-                    score = maxOf(score, 0.96f)
+                    hardcoreScore = 0.96f
+                    adultScore = 0.96f
                     matched.add(domain.trimEnd('.'))
                 }
             }
 
             for (term in HARDCORE_EXPLICIT_TERMS) {
                 if (containsWordOrSubstring(combinedLower, term)) {
-                    score = maxOf(score, 0.88f)
+                    hardcoreScore = maxOf(hardcoreScore, 0.88f)
+                    adultScore = maxOf(adultScore, 0.88f)
                     if (matched.size < 4) matched.add(term)
                 }
             }
@@ -180,15 +250,25 @@ object ScreenTextContextAnalyzer {
             }
 
             if (contextualHits >= 2) {
-                score = maxOf(score, 0.72f)
+                adultScore = maxOf(adultScore, 0.72f)
             } else if (contextualHits == 1) {
-                score = maxOf(score, 0.48f)
+                adultScore = maxOf(adultScore, 0.48f)
+            }
+
+            if (isBenignEducational && !isPornDomain) {
+                adultScore *= 0.25f
+                hardcoreScore = 0f
             }
 
             val signal = ScreenTextSignal(
-                adultScore = score.coerceIn(0f, 1f),
+                hasVisibleText = true,
+                adultScore = adultScore.coerceIn(0f, 1f),
+                hardcoreScore = hardcoreScore.coerceIn(0f, 1f),
                 isExplicitPornDomain = isPornDomain,
-                matchedIndicators = matched.distinct()
+                fromSubtitleNode = subtitleNodeFound,
+                isBenignEducationalOrDialogue = isBenignEducational,
+                matchedIndicators = matched.distinct(),
+                scanDurationMs = durMs
             )
             latestSignal = signal
             return signal
@@ -201,8 +281,6 @@ object ScreenTextContextAnalyzer {
         if (needle.length >= 6 || needle.contains(' ') || needle.contains('.')) {
             return haystack.contains(needle)
         }
-        // For short 3-5 char words ("sex", "xxx", "18+", "nude", "porn", "tits", "dick", "cock"),
-        // require word boundaries so innocent words like "essex", "sixth", or "cockpit" never match.
         val idx = haystack.indexOf(needle)
         if (idx < 0) return false
         val beforeOk = idx == 0 || !haystack[idx - 1].isLetterOrDigit()
@@ -216,28 +294,28 @@ object ScreenTextContextAnalyzer {
         targetPackageName: String
     ): AccessibilityNodeInfo? {
         try {
-            val windows = service.windows
-            if (!windows.isNullOrEmpty()) {
-                val appWin = windows.firstOrNull { win ->
-                    win.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
-                        win.isActive &&
-                        try {
-                            win.root?.packageName?.toString() == targetPackageName
-                        } catch (_: Exception) {
-                            false
-                        }
-                } ?: windows.firstOrNull { win ->
-                    win.type == AccessibilityWindowInfo.TYPE_APPLICATION && win.isActive
-                }
-                if (appWin != null) {
-                    appWin.root?.let { return it }
+            val active = service.rootInActiveWindow
+            if (active != null) {
+                val pkg = active.packageName?.toString() ?: ""
+                if (pkg != "com.paulfruitful.screenguard" &&
+                    (targetPackageName.isBlank() || pkg == targetPackageName)
+                ) {
+                    return active
                 }
             }
         } catch (_: Exception) {
         }
         return try {
-            val active = service.rootInActiveWindow
-            if (active?.packageName?.toString() != "com.paulfruitful.screenguard") active else null
+            val windows = service.windows
+            if (!windows.isNullOrEmpty()) {
+                val appWin = windows.firstOrNull { win ->
+                    win.type == AccessibilityWindowInfo.TYPE_APPLICATION && win.isActive
+                }
+                val root = appWin?.root
+                if (root?.packageName?.toString() != "com.paulfruitful.screenguard") root else null
+            } else {
+                null
+            }
         } catch (_: Exception) {
             null
         }

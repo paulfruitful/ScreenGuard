@@ -14,6 +14,7 @@ import com.facebook.react.bridge.WritableMap
 import com.paulfruitful.screenguard.accessibility.EventDebouncer
 import com.paulfruitful.screenguard.accessibility.MonitoringNotificationManager
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
+import com.paulfruitful.screenguard.accessibility.ServiceHealthMonitor
 import com.paulfruitful.screenguard.capture.BufferReleaseTracker
 import com.paulfruitful.screenguard.capture.ProcessedScreenshotOutcome
 import com.paulfruitful.screenguard.capture.ScreenshotProcessor
@@ -24,6 +25,7 @@ import com.paulfruitful.screenguard.classifier.FullEvaluationReport
 import com.paulfruitful.screenguard.classifier.SingleSampleEvalResult
 import com.paulfruitful.screenguard.classifier.SplitEvaluationMetrics
 import com.paulfruitful.screenguard.classifier.TemporalDecisionEngine
+import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.AppCompatibilityEntry
@@ -662,6 +664,44 @@ class ScreenGuardModule(
                 putNull("latestClassification")
             }
             putMap("bufferDiagnostics", diagMap)
+            val health = ServiceHealthMonitor.snapshot(appCtx)
+            putMap(
+                "serviceHealth",
+                Arguments.createMap().apply {
+                    putString("healthState", health.healthState)
+                    putDouble("uptimeMs", health.uptimeMs.toDouble())
+                    putInt("consecutiveCaptureFailures", health.consecutiveCaptureFailures)
+                    putInt("consecutiveWindowApiFailures", health.consecutiveWindowApiFailures)
+                    putBoolean("windowApiCircuitOpen", health.windowApiCircuitOpen)
+                    putInt("inferenceTimeouts", health.inferenceTimeouts)
+                    putInt("lowMemoryTrims", health.lowMemoryTrims)
+                    putDouble("javaHeapUsedKb", health.javaHeapUsedKb.toDouble())
+                    putDouble("nativeHeapUsedKb", health.nativeHeapUsedKb.toDouble())
+                    putDouble("totalPssKb", health.totalPssKb.toDouble())
+                    putString("lastRecoveryAction", health.lastRecoveryAction)
+                }
+            )
+            val tele = PipelineTelemetry.snapshot()
+            putMap(
+                "pipelineTelemetry",
+                Arguments.createMap().apply {
+                    putInt("frames", tele.frames)
+                    putDouble("captureP50Ms", tele.capture.p50.toDouble())
+                    putDouble("captureP95Ms", tele.capture.p95.toDouble())
+                    putDouble("preprocessP50Ms", tele.preprocess.p50.toDouble())
+                    putDouble("preprocessP95Ms", tele.preprocess.p95.toDouble())
+                    putDouble("stage1P50Ms", tele.stage1.p50.toDouble())
+                    putDouble("stage1P95Ms", tele.stage1.p95.toDouble())
+                    putDouble("inferenceP50Ms", tele.inference.p50.toDouble())
+                    putDouble("inferenceP95Ms", tele.inference.p95.toDouble())
+                    putDouble("decisionP50Ms", tele.decision.p50.toDouble())
+                    putDouble("captureToPredictionP50Ms", tele.captureToPrediction.p50.toDouble())
+                    putDouble("captureToPredictionP95Ms", tele.captureToPrediction.p95.toDouble())
+                    putDouble("eventToDecisionP50Ms", tele.eventToDecision.p50.toDouble())
+                    putDouble("eventToDecisionP95Ms", tele.eventToDecision.p95.toDouble())
+                    putDouble("droppedObsoleteTriggers", tele.droppedObsoleteTriggers.toDouble())
+                }
+            )
         }
     }
 

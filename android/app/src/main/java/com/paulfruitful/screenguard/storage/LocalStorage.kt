@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.Executors
 
 data class UserPreferencesData(
     val protectionEnabled: Boolean = true,
@@ -78,10 +79,15 @@ object LocalStorage {
     private const val MAX_LOG_ENTRIES = 180
 
     private val lock = Any()
+    private val ioExecutor = Executors.newSingleThreadExecutor()
     @Volatile
     private var prefsInstance: SharedPreferences? = null
     @Volatile
     private var cachedPreferences: UserPreferencesData? = null
+    @Volatile
+    private var cachedProtectionStats: ProtectionStatsData? = null
+    @Volatile
+    private var cachedActivityLogs: List<ActivityLogRecord>? = null
 
     fun init(context: Context) {
         if (prefsInstance == null) {
@@ -291,13 +297,17 @@ object LocalStorage {
     }
 
     fun getProtectionStats(context: Context? = null): ProtectionStatsData {
+        cachedProtectionStats?.let { return it }
         synchronized(lock) {
+            cachedProtectionStats?.let { return it }
             val sp = try {
                 requirePrefs(context)
             } catch (_: Exception) {
                 return ProtectionStatsData()
             }
-            val raw = sp.getString(KEY_PROTECTION_STATS, null) ?: return ProtectionStatsData()
+            val raw = sp.getString(KEY_PROTECTION_STATS, null) ?: return ProtectionStatsData().also {
+                cachedProtectionStats = it
+            }
             return try {
                 val obj = JSONObject(raw)
                 val pkgArr = obj.optJSONArray("protectedPackages")
@@ -314,7 +324,7 @@ object LocalStorage {
                     totalDismissals = obj.optInt("totalDismissals", 0),
                     totalReturnToSafetyClicks = obj.optInt("totalReturnToSafetyClicks", 0),
                     totalAutoRecoveries = obj.optInt("totalAutoRecoveries", 0)
-                )
+                ).also { cachedProtectionStats = it }
             } catch (_: Exception) {
                 ProtectionStatsData()
             }
@@ -322,14 +332,20 @@ object LocalStorage {
     }
 
     private fun saveProtectionStatsInternal(sp: SharedPreferences, stats: ProtectionStatsData) {
-        val obj = JSONObject().apply {
-            put("totalProtectionEvents", stats.totalProtectionEvents)
-            put("protectedPackages", JSONArray(stats.protectedPackages.toList()))
-            put("totalDismissals", stats.totalDismissals)
-            put("totalReturnToSafetyClicks", stats.totalReturnToSafetyClicks)
-            put("totalAutoRecoveries", stats.totalAutoRecoveries)
+        cachedProtectionStats = stats
+        ioExecutor.execute {
+            try {
+                val obj = JSONObject().apply {
+                    put("totalProtectionEvents", stats.totalProtectionEvents)
+                    put("protectedPackages", JSONArray(stats.protectedPackages.toList()))
+                    put("totalDismissals", stats.totalDismissals)
+                    put("totalReturnToSafetyClicks", stats.totalReturnToSafetyClicks)
+                    put("totalAutoRecoveries", stats.totalAutoRecoveries)
+                }
+                sp.edit().putString(KEY_PROTECTION_STATS, obj.toString()).apply()
+            } catch (_: Exception) {
+            }
         }
-        sp.edit().putString(KEY_PROTECTION_STATS, obj.toString()).apply()
     }
 
     fun recordProtectionTriggered(context: Context? = null, packageName: String): ProtectionStatsData {
@@ -398,35 +414,53 @@ object LocalStorage {
     }
 
     fun appendActivityLog(context: Context? = null, record: ActivityLogRecord) {
+        val sp = try {
+            requirePrefs(context)
+        } catch (_: Exception) {
+            return
+        }
+        val snapshot: List<ActivityLogRecord>
         synchronized(lock) {
-            val sp = try {
-                requirePrefs(context)
+            val base = cachedActivityLogs ?: getActivityLogsInternal(sp, MAX_LOG_ENTRIES)
+            val updated = ArrayList<ActivityLogRecord>(minOf(base.size + 1, MAX_LOG_ENTRIES))
+            updated.add(record)
+            val takeCount = minOf(base.size, MAX_LOG_ENTRIES - 1)
+            for (i in 0 until takeCount) {
+                updated.add(base[i])
+            }
+            cachedActivityLogs = updated
+            snapshot = updated
+        }
+        ioExecutor.execute {
+            try {
+                val arr = JSONArray()
+                snapshot.forEach { item ->
+                    arr.put(activityRecordToJson(item))
+                }
+                sp.edit().putString(KEY_ACTIVITY_LOGS, arr.toString()).apply()
             } catch (_: Exception) {
-                return
             }
-            val existing = getActivityLogsInternal(sp, MAX_LOG_ENTRIES - 1).toMutableList()
-            existing.add(0, record)
-            val arr = JSONArray()
-            existing.take(MAX_LOG_ENTRIES).forEach { item ->
-                arr.put(activityRecordToJson(item))
-            }
-            sp.edit().putString(KEY_ACTIVITY_LOGS, arr.toString()).apply()
         }
     }
 
     fun getActivityLogs(context: Context? = null, limit: Int = 120): List<ActivityLogRecord> {
+        cachedActivityLogs?.let { return it.take(limit) }
         synchronized(lock) {
+            cachedActivityLogs?.let { return it.take(limit) }
             val sp = try {
                 requirePrefs(context)
             } catch (_: Exception) {
                 return emptyList()
             }
-            return getActivityLogsInternal(sp, limit)
+            val loaded = getActivityLogsInternal(sp, MAX_LOG_ENTRIES)
+            cachedActivityLogs = loaded
+            return loaded.take(limit)
         }
     }
 
     fun clearActivityLogs(context: Context? = null) {
         synchronized(lock) {
+            cachedActivityLogs = emptyList()
             val sp = try {
                 requirePrefs(context)
             } catch (_: Exception) {

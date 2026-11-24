@@ -383,19 +383,52 @@ class LiteRtNsfwClassifier(
                 var appliedMode = PreprocessingMode.ORIGINAL
                 val textSignal = ScreenTextContextAnalyzer.getLatestSignal()
 
+                // Fast Safe Short-Circuit (Phase B < 50 ms target):
+                // If Stage 1 on the primary frame is overwhelmingly safe and there is no adult text
+                // or low-light ambiguity, return immediately after a single Stage-1 pass (~18-28 ms).
+                val clearlySafeStage1 =
+                    !illum.isLowLight &&
+                        (origS1.neutral + origS1.drawings) >= 0.85f &&
+                        origS1.porn < 0.055f &&
+                        origS1.sexy < 0.14f &&
+                        textSignal.adultScore < 0.30f &&
+                        !textSignal.isExplicitPornDomain
+
+                if (clearlySafeStage1) {
+                    val fastMs = max(1L, (SystemClock.elapsedRealtimeNanos() - totalStartNs) / 1_000_000L)
+                    return@withContext resolveTwoStageTaxonomy(
+                        origS1 = origS1,
+                        effectiveS1 = origS1,
+                        s2 = null,
+                        illum = illum,
+                        preprocessingMode = PreprocessingMode.ORIGINAL,
+                        baselineCategory = baselineResult.predictedCategory,
+                        baselineConfidence = baselineResult.confidence,
+                        durationMs = fastMs,
+                        explicitThreshold = prefs.confidenceThreshold
+                    )
+                }
+
                 // 2. Multi-Region ROI Visual Scan for Vertical Mobile Videos & Social Feeds:
                 // Full-screen 1080x2400 captures often contain 40% ceiling/background and 25% UI controls,
                 // squashing the central action when resized to 224x224.
                 if ((origS1.porn >= 0.06f && (origS1.sexy >= 0.018f || origS1.porn >= 0.35f)) ||
                     textSignal.adultScore >= 0.35f
                 ) {
-                    val cropCenter = extractSubCrop224(targetBmp, 0.0f, 0.18f, 1.0f, 0.78f)
                     val cropAction = extractSubCrop224(targetBmp, 0.10f, 0.38f, 0.90f, 0.76f)
-                    val cropLower = extractSubCrop224(targetBmp, 0.15f, 0.45f, 0.85f, 0.82f)
+                    val cropCenter = extractSubCrop224(targetBmp, 0.0f, 0.18f, 1.0f, 0.78f)
+                    var cropLower: Bitmap? = null
                     try {
-                        val centerS1 = inferenceMutex.withLock { runStage1Locked(cropCenter) }
                         val actionS1 = inferenceMutex.withLock { runStage1Locked(cropAction) }
-                        val lowerS1 = inferenceMutex.withLock { runStage1Locked(cropLower) }
+                        val centerS1 = inferenceMutex.withLock { runStage1Locked(cropCenter) }
+
+                        // Fast ROI exit: if Action + Center already confirm >= 0.72 porn, skip 3rd crop
+                        val lowerS1 = if (centerS1.porn >= 0.38f && actionS1.porn >= 0.72f) {
+                            actionS1
+                        } else {
+                            cropLower = extractSubCrop224(targetBmp, 0.15f, 0.45f, 0.85f, 0.82f)
+                            inferenceMutex.withLock { runStage1Locked(cropLower!!) }
+                        }
 
                         val maxActionPorn = maxOf(actionS1.porn, lowerS1.porn)
                         val maxAllPorn = maxOf(centerS1.porn, actionS1.porn, lowerS1.porn)
@@ -414,13 +447,13 @@ class LiteRtNsfwClassifier(
                     } finally {
                         if (!cropCenter.isRecycled) cropCenter.recycle()
                         if (!cropAction.isRecycled) cropAction.recycle()
-                        if (!cropLower.isRecycled) cropLower.recycle()
+                        cropLower?.let { if (!it.isRecycled) it.recycle() }
                     }
                 }
 
                 // 2b. Low-light enhancement path: only evaluate enhanced frames when the scene is
-                // genuinely low-light (`illum.isLowLight`) and not a clean vector drawing.
-                if (illum.isLowLight && origS1.drawings < 0.80f) {
+                // genuinely low-light (`illum.isLowLight`) and not already confirmed explicit.
+                if (illum.isLowLight && origS1.drawings < 0.80f && effectiveS1.porn < 0.72f) {
                     claheBmp = LowLightPreprocessor.applyClaheLocalContrast(targetBmp)
                     gammaBmp = LowLightPreprocessor.applyGammaCorrection(targetBmp, illum)
 

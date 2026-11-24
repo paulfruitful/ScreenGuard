@@ -13,6 +13,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
@@ -24,6 +25,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
+import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
 
 /**
  * Interface for controlling the system-wide protective overlay (Section 8).
@@ -197,6 +199,7 @@ class ScreenGuardOverlayController(
 
         bindReasonToViews(reason)
 
+        val attachStartNs = SystemClock.elapsedRealtimeNanos()
         try {
             if (view.parent != null) {
                 (view.parent as? ViewGroup)?.removeView(view)
@@ -207,6 +210,9 @@ class ScreenGuardOverlayController(
             attachedWindowManager = wm
             isOverlayAttached = true
             lastOverlayError = "NONE"
+            PipelineTelemetry.recordOverlayAttach(
+                maxOf(1L, (SystemClock.elapsedRealtimeNanos() - attachStartNs) / 1_000_000L)
+            )
         } catch (e: Exception) {
             // If TYPE_ACCESSIBILITY_OVERLAY failed and SYSTEM_ALERT_WINDOW is granted, try fallback once
             if (canUseA11yOverlay && canUseAppOverlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

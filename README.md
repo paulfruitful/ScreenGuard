@@ -162,6 +162,7 @@ Milestone 2 replaces the mock classifier with a production on-device **Google Li
 - **Full Evaluation & Benchmark Reports**:
   - [MODEL_EVALUATION_REPORT.md](file:///c:/Users/HomePC/ScreenGuard/MODEL_EVALUATION_REPORT.md): Milestones 2 & 2.1 two-stage LiteRT + low-light CLAHE/Gamma evaluation across 36 validation and held-out test samples (`100.0%` Precision, `100.0%` Recall, `0.0%` FPR, `0.0%` Uncertain Rate).
   - [MILESTONE_3_TEST_REPORT.md](file:///c:/Users/HomePC/ScreenGuard/MILESTONE_3_TEST_REPORT.md): Milestone 3 WindowManager `TYPE_ACCESSIBILITY_OVERLAY` vs `TYPE_APPLICATION_OVERLAY` evaluation, 5-state overlay lifecycle state machine (`HIDDEN`, `PENDING`, `PROTECTED`, `RECOVERING`, `DISMISSED`), `BALANCED` vs `STRICT` policy calibration, and cross-application compatibility report.
+  - [PHASE_ABCD_ENGINEERING_REPORT.md](file:///c:/Users/HomePC/ScreenGuard/PHASE_ABCD_ENGINEERING_REPORT.md): Phase A–D Reliability, Performance & Multimodal Detection Upgrade report (ADB ANR root-cause proof & fix, `< 50 ms` Stage-1 / `< 150 ms` screenshot-to-prediction latency pipeline, local-only Multimodal Visual + AudioPlaybackCapture + Caption/URL + OCR Fusion Engine, and 52-sample Development/Validation/Locked-Test benchmark with 95% Wilson confidence intervals).
 
 ---
 
