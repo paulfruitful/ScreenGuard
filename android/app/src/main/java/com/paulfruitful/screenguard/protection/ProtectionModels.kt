@@ -43,20 +43,20 @@ data class ProtectionPolicyConfig(
     val sensitivityMode: ProtectionSensitivityMode = ProtectionSensitivityMode.BALANCED,
     val interveneOnSuggestiveInStrict: Boolean = true,
     val allowManualDismiss: Boolean = true,
-    val explicitThreshold: Float = 0.72f,
-    val nudityThreshold: Float = 0.42f,
-    val sexualActivityThreshold: Float = 0.45f,
-    val suggestiveThresholdStrict: Float = 0.78f,
-    val confirmationFramesRequired: Int = 2,
-    val recoverySafeFramesRequired: Int = 2,
-    val minDisplayDurationMs: Long = 2500L,
+    val explicitThreshold: Float = 0.55f,
+    val nudityThreshold: Float = 0.35f,
+    val sexualActivityThreshold: Float = 0.36f,
+    val suggestiveThresholdStrict: Float = 0.52f,
+    val confirmationFramesRequired: Int = 1,
+    val recoverySafeFramesRequired: Int = 1,
+    val minDisplayDurationMs: Long = 1200L,
     val dismissCooldownMs: Long = 12_000L
 ) {
     companion object {
         fun forMode(
             mode: ProtectionSensitivityMode,
-            baseConfidenceThreshold: Float = 0.72f,
-            confirmationFrames: Int = 2,
+            baseConfidenceThreshold: Float = 0.60f,
+            confirmationFrames: Int = 1,
             allowDismiss: Boolean = true
         ): ProtectionPolicyConfig {
             return when (mode) {
@@ -64,26 +64,26 @@ data class ProtectionPolicyConfig(
                     sensitivityMode = ProtectionSensitivityMode.BALANCED,
                     interveneOnSuggestiveInStrict = false,
                     allowManualDismiss = allowDismiss,
-                    explicitThreshold = baseConfidenceThreshold.coerceIn(0.60f, 0.92f),
-                    nudityThreshold = (baseConfidenceThreshold * 0.58f).coerceIn(0.38f, 0.62f),
-                    sexualActivityThreshold = (baseConfidenceThreshold * 0.62f).coerceIn(0.42f, 0.65f),
-                    suggestiveThresholdStrict = 0.99f,
-                    confirmationFramesRequired = confirmationFrames.coerceIn(2, 5),
-                    recoverySafeFramesRequired = 2,
-                    minDisplayDurationMs = 2500L,
+                    explicitThreshold = (baseConfidenceThreshold * 0.80f).coerceIn(0.48f, 0.65f),
+                    nudityThreshold = (baseConfidenceThreshold * 0.50f).coerceIn(0.32f, 0.45f),
+                    sexualActivityThreshold = (baseConfidenceThreshold * 0.52f).coerceIn(0.34f, 0.46f),
+                    suggestiveThresholdStrict = 0.85f,
+                    confirmationFramesRequired = 1,
+                    recoverySafeFramesRequired = 1,
+                    minDisplayDurationMs = 1200L,
                     dismissCooldownMs = 12_000L
                 )
                 ProtectionSensitivityMode.STRICT -> ProtectionPolicyConfig(
                     sensitivityMode = ProtectionSensitivityMode.STRICT,
                     interveneOnSuggestiveInStrict = true,
                     allowManualDismiss = allowDismiss,
-                    explicitThreshold = (baseConfidenceThreshold * 0.88f).coerceIn(0.52f, 0.85f),
-                    nudityThreshold = (baseConfidenceThreshold * 0.50f).coerceIn(0.32f, 0.55f),
-                    sexualActivityThreshold = (baseConfidenceThreshold * 0.54f).coerceIn(0.35f, 0.58f),
-                    suggestiveThresholdStrict = 0.76f,
-                    confirmationFramesRequired = maxOf(2, confirmationFrames - 1),
-                    recoverySafeFramesRequired = 2,
-                    minDisplayDurationMs = 3000L,
+                    explicitThreshold = (baseConfidenceThreshold * 0.68f).coerceIn(0.40f, 0.55f),
+                    nudityThreshold = (baseConfidenceThreshold * 0.42f).coerceIn(0.26f, 0.38f),
+                    sexualActivityThreshold = (baseConfidenceThreshold * 0.44f).coerceIn(0.28f, 0.40f),
+                    suggestiveThresholdStrict = 0.50f,
+                    confirmationFramesRequired = 1,
+                    recoverySafeFramesRequired = 1,
+                    minDisplayDurationMs = 1300L,
                     dismissCooldownMs = 15_000L
                 )
             }

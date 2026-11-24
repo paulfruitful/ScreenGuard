@@ -48,6 +48,10 @@ object ProtectionCoordinator {
 
     fun isOverlayVisible(): Boolean = overlayController?.isVisible() == true
 
+    fun setOverlayTransparentForProbe(transparent: Boolean) {
+        overlayController?.setTemporarilyTransparentForProbe(transparent)
+    }
+
     fun init(context: Context) {
         if (overlayController != null && appContext != null) return
         synchronized(lock) {
@@ -143,18 +147,20 @@ object ProtectionCoordinator {
                 overlayController?.updateProtection(reason)
             }
         } else if (decision.shouldHideOverlay) {
-            overlayController?.hideProtection()
             if (decision.directive == DecisionDirective.CLEAR_PROTECTION) {
+                overlayController?.fadeOutProtection()
                 LocalStorage.recordAutoRecovery(context)
                 LocalStorage.appendActivityLog(
                     context,
                     ActivityLogRecord(
                         type = "SERVICE_STATE",
-                        title = "Protective Overlay Cleared (Safe Content Confirmed)",
+                        title = "Protective Overlay Faded Away (Safe Content Confirmed)",
                         detail = "${decision.reasonSummary} in $pkg.",
                         packageName = pkg
                     )
                 )
+            } else {
+                overlayController?.hideProtection()
             }
             clearActiveMetadata()
         }

@@ -31,6 +31,8 @@ import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityServic
 interface OverlayController {
     fun showProtection(reason: ProtectionReason)
     fun hideProtection()
+    fun fadeOutProtection()
+    fun setTemporarilyTransparentForProbe(transparent: Boolean)
     fun updateProtection(reason: ProtectionReason)
     fun isVisible(): Boolean
     fun onConfigurationChanged(newConfig: Configuration?)
@@ -84,6 +86,8 @@ class ScreenGuardOverlayController(
         runOnMain {
             currentReason = reason
             if (isOverlayAttached && rootOverlayView != null) {
+                rootOverlayView?.animate()?.cancel()
+                rootOverlayView?.alpha = 1f
                 bindReasonToViews(reason)
                 return@runOnMain
             }
@@ -95,6 +99,8 @@ class ScreenGuardOverlayController(
         runOnMain {
             currentReason = reason
             if (isOverlayAttached && rootOverlayView != null) {
+                rootOverlayView?.animate()?.cancel()
+                rootOverlayView?.alpha = 1f
                 bindReasonToViews(reason)
             } else {
                 attachOverlayInternal(reason)
@@ -104,7 +110,34 @@ class ScreenGuardOverlayController(
 
     override fun hideProtection() {
         runOnMain {
+            rootOverlayView?.animate()?.cancel()
             detachOverlayInternal()
+        }
+    }
+
+    override fun fadeOutProtection() {
+        runOnMain {
+            val view = rootOverlayView
+            if (!isOverlayAttached || view == null) {
+                detachOverlayInternal()
+                return@runOnMain
+            }
+            view.animate().cancel()
+            view.animate()
+                .alpha(0f)
+                .setDuration(260L)
+                .withEndAction {
+                    detachOverlayInternal()
+                }
+                .start()
+        }
+    }
+
+    override fun setTemporarilyTransparentForProbe(transparent: Boolean) {
+        runOnMain {
+            val view = rootOverlayView ?: return@runOnMain
+            if (!isOverlayAttached) return@runOnMain
+            view.alpha = if (transparent) 0f else 1f
         }
     }
 
@@ -168,7 +201,9 @@ class ScreenGuardOverlayController(
             if (view.parent != null) {
                 (view.parent as? ViewGroup)?.removeView(view)
             }
+            view.alpha = 0f
             wm.addView(view, layoutParams)
+            view.animate().alpha(1f).setDuration(140L).start()
             attachedWindowManager = wm
             isOverlayAttached = true
             lastOverlayError = "NONE"

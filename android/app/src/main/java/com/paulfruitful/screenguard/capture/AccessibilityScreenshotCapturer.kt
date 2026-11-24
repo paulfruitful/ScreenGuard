@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Build
 import android.os.SystemClock
 import android.view.Display
+import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.LocalStorage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -149,12 +151,23 @@ object AccessibilityScreenshotCapturer {
                 "takeScreenshot(DEFAULT_DISPLAY)"
             }
 
-            val displayAttempt = withTimeoutOrNull(2000L) {
-                requestDisplayScreenshot(service)
-            } ?: RawCaptureAttempt(
-                null,
-                AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR
-            )
+            val overlayWasVisible = ProtectionCoordinator.isOverlayVisible()
+            if (overlayWasVisible) {
+                ProtectionCoordinator.setOverlayTransparentForProbe(true)
+                delay(28L)
+            }
+            val displayAttempt = try {
+                withTimeoutOrNull(2000L) {
+                    requestDisplayScreenshot(service)
+                } ?: RawCaptureAttempt(
+                    null,
+                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR
+                )
+            } finally {
+                if (overlayWasVisible) {
+                    ProtectionCoordinator.setOverlayTransparentForProbe(false)
+                }
+            }
             if (displayAttempt.result != null) {
                 val outcome = ScreenshotProcessor.processScreenshotResult(
                     screenshotResult = displayAttempt.result,

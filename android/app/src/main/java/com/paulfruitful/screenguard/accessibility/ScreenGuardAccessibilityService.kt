@@ -16,7 +16,9 @@ import com.paulfruitful.screenguard.capture.AccessibilityScreenshotCapturer
 import com.paulfruitful.screenguard.capture.BufferReleaseTracker
 import com.paulfruitful.screenguard.capture.ProcessedScreenshotOutcome
 import com.paulfruitful.screenguard.capture.ScreenshotProcessor
+import com.paulfruitful.screenguard.classifier.ClassificationResult
 import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
+import com.paulfruitful.screenguard.classifier.ContentCategory
 import com.paulfruitful.screenguard.classifier.DetectionEngine
 import com.paulfruitful.screenguard.protection.OverlayState
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
@@ -24,9 +26,11 @@ import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.LocalStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
@@ -48,6 +52,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(Dispatchers.Main.immediate + serviceJob)
     private lateinit var eventDebouncer: EventDebouncer
     private var screenStateReceiverRegistered = false
+    private var adaptiveWatchdogJob: Job? = null
 
     private val screenStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -218,6 +223,8 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             monitoringActive = prefs.protectionEnabled
         )
 
+        startAdaptiveWatchdogLoop()
+
         // Pre-warm LiteRT model and execute initial on-device evaluation verification on background thread
         serviceScope.launch(Dispatchers.Default) {
             try {
@@ -337,13 +344,44 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         }
 
         // Do not schedule automatic background screenshots when protection is paused,
-        // when the full-screen protective overlay is already covering the screen,
         // when Screen Guard itself is in the foreground, or when the foreground app is excluded.
         if (!prefs.protectionEnabled) return
-        if (ProtectionCoordinator.isOverlayVisible()) return
         val activePkg = currentForegroundPackage
         if (activePkg.isBlank() || activePkg == "None" || activePkg == SELF_PACKAGE) return
         if (prefs.excludedPackages.contains(activePkg)) return
+
+        // Fast-path On-Screen Text & Porn Domain Check (< 2ms):
+        // If the active window displays an explicit porn domain (e.g. pornhub, xvideos, xnxx),
+        // activate the protective shield immediately without waiting for screenshot debounce.
+        val textSignal = ScreenTextContextAnalyzer.analyzeActiveApplicationWindow(this, activePkg)
+        if (textSignal.isExplicitPornDomain && !ProtectionCoordinator.isOverlayVisible()) {
+            val instantTextResult = ClassificationResult(
+                scores = mapOf("EXPLICIT" to 0.96f, "porn" to 0.96f),
+                predictedCategory = ContentCategory.EXPLICIT.name,
+                confidence = 0.96f,
+                processingDurationMs = 1L,
+                modelVersion = "text-context-fastpath",
+                successful = true,
+                isExplicit = true,
+                explicitScore = 0.96f,
+                pornScore = 0.96f,
+                safeScore = 0.04f,
+                consecutiveDetections = 1,
+                confirmedIntervention = true,
+                temporalState = "CONFIRMED_DETECTION",
+                smoothedExplicitScore = 0.96f,
+                packageName = activePkg,
+                windowId = currentWindowId
+            )
+            ProtectionCoordinator.onClassificationResult(
+                context = applicationContext,
+                result = instantTextResult,
+                appLabel = currentForegroundAppLabel
+            )
+            return
+        }
+
+        if (ProtectionCoordinator.isOverlayVisible()) return
 
         val adaptiveCooldown = DetectionEngine.computeRecommendedCooldownMs(
             prefs.samplingIntervalMs
@@ -425,6 +463,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 debugPreviewBase64 = null
             )
         }
+
+        // Refresh on-screen text context right before visual capture so LiteRtNsfwClassifier
+        // combines visible captions/handles/URLs with multi-region visual classification.
+        ScreenTextContextAnalyzer.analyzeActiveApplicationWindow(this, currentForegroundPackage)
 
         val outcome = AccessibilityScreenshotCapturer.captureAndProcess(
             service = this,
@@ -659,7 +701,73 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun startAdaptiveWatchdogLoop() {
+        adaptiveWatchdogJob?.cancel()
+        adaptiveWatchdogJob = serviceScope.launch {
+            while (isActive && instance != null) {
+                delay(1200L)
+                try {
+                    if (!isScreenInteractive()) continue
+                    val prefs = LocalStorage.getPreferences(applicationContext)
+                    if (!prefs.protectionEnabled) continue
+
+                    val resolved = ActiveWindowResolver.resolve(
+                        service = this@ScreenGuardAccessibilityService,
+                        event = null,
+                        fallbackPackage = currentForegroundPackage,
+                        fallbackWindowId = currentWindowId
+                    )
+                    val pkg = resolved.packageName
+                    if (pkg.isBlank() || pkg == "None" || pkg == SELF_PACKAGE) continue
+                    if (prefs.excludedPackages.contains(pkg)) continue
+
+                    if (pkg != currentForegroundPackage) {
+                        currentForegroundPackage = pkg
+                        currentForegroundAppLabel = resolved.appLabel
+                        currentWindowId = resolved.windowId
+                        DetectionEngine.onForegroundPackageChanged(pkg)
+                        ProtectionCoordinator.onForegroundAppChanged(
+                            context = applicationContext,
+                            newPackageName = pkg,
+                            newAppLabel = resolved.appLabel,
+                            windowId = resolved.windowId
+                        )
+                    } else {
+                        currentWindowId = resolved.windowId
+                    }
+
+                    val overlayVisible = ProtectionCoordinator.isOverlayVisible()
+                    val elapsedSinceCapture = System.currentTimeMillis() - lastScreenshotTimestamp
+
+                    if (overlayVisible) {
+                        // Auto-Fade Recovery Probe: while the protective overlay is visible,
+                        // periodically inspect the underlying application window so the shield
+                        // automatically fades away as soon as explicit content is no longer on screen.
+                        if (elapsedSinceCapture >= 1150L) {
+                            executeObservationPipeline(
+                                holdInMemoryPreview = false,
+                                bypassSelfExclusion = false
+                            )
+                        }
+                    } else {
+                        // Hands-free video & dynamic content watchdog: if a video is playing without
+                        // continuous user scroll events, sample every ~1.3s to catch explicit scenes promptly.
+                        if (elapsedSinceCapture >= 1300L) {
+                            executeObservationPipeline(
+                                holdInMemoryPreview = false,
+                                bypassSelfExclusion = false
+                            )
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
     private fun cleanupOnDisconnect(reason: String) {
+        adaptiveWatchdogJob?.cancel()
+        adaptiveWatchdogJob = null
         unregisterScreenOffReceiver()
         if (instance === this) {
             instance = null

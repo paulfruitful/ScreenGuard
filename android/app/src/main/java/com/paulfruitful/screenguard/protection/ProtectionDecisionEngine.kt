@@ -198,20 +198,8 @@ class ProtectionDecisionEngine {
             activeTriggerCategory = result.predictedCategory
 
             val requiredFrames = policy.confirmationFramesRequired.coerceAtLeast(1)
-            val meetsSmoothedGate = ewmaViolationConfidence >= (catEval.thresholdUsed * 0.72f)
-            val isHighConfidenceCorroborated =
-                result.confirmedIntervention ||
-                    (result.predictedCategory == ContentCategory.EXPLICIT.name &&
-                        catEval.effectiveScore >= catEval.thresholdUsed) ||
-                    (result.predictedCategory == ContentCategory.NUDITY.name &&
-                        (catEval.effectiveScore >= 0.48f ||
-                            (result.stage2Triggered && result.stage2NsfwScore >= 0.42f))) ||
-                    (result.predictedCategory == ContentCategory.SEXUAL_ACTIVITY.name &&
-                        (catEval.effectiveScore >= 0.50f ||
-                            (result.stage2Triggered && result.stage2NsfwScore >= 0.45f)))
-
-            val confirmed = (consecutivePositiveFrames >= requiredFrames && meetsSmoothedGate) ||
-                (consecutivePositiveFrames >= 1 && isHighConfidenceCorroborated)
+            val confirmed = consecutivePositiveFrames >= requiredFrames ||
+                catEval.effectiveScore >= catEval.thresholdUsed
 
             return if (confirmed || isCurrentlyShowingOverlay) {
                 if (!isCurrentlyShowingOverlay) {
@@ -392,14 +380,22 @@ class ProtectionDecisionEngine {
             }
             ContentCategory.SUGGESTIVE.name -> {
                 val score = maxOf(result.confidence, result.suggestiveScore, result.sexyScore)
+                val isPornAdjacentInBalanced =
+                    policy.sensitivityMode == ProtectionSensitivityMode.BALANCED &&
+                        ((result.pornScore >= 0.12f && score >= 0.55f) || score >= 0.82f)
                 val shouldIntervene =
-                    policy.sensitivityMode == ProtectionSensitivityMode.STRICT &&
-                        policy.interveneOnSuggestiveInStrict &&
-                        score >= policy.suggestiveThresholdStrict
+                    isPornAdjacentInBalanced ||
+                        (policy.sensitivityMode == ProtectionSensitivityMode.STRICT &&
+                            policy.interveneOnSuggestiveInStrict &&
+                            score >= policy.suggestiveThresholdStrict)
                 CategoryPolicyEvaluation(
                     violatesPolicy = shouldIntervene,
                     effectiveScore = score,
-                    thresholdUsed = policy.suggestiveThresholdStrict
+                    thresholdUsed = if (policy.sensitivityMode == ProtectionSensitivityMode.STRICT) {
+                        policy.suggestiveThresholdStrict
+                    } else {
+                        0.55f
+                    }
                 )
             }
             ContentCategory.UNCERTAIN.name,

@@ -13,11 +13,11 @@ data class UserPreferencesData(
         "com.google.android.inputmethod.latin",
         "com.samsung.android.honeyboard"
     ),
-    val samplingIntervalMs: Long = 2000L,
-    val debounceDelayMs: Long = 550L,
+    val samplingIntervalMs: Long = 1100L,
+    val debounceDelayMs: Long = 220L,
     val preferWindowCapture: Boolean = true,
-    val confidenceThreshold: Float = 0.72f,
-    val confirmationFramesRequired: Int = 2,
+    val confidenceThreshold: Float = 0.60f,
+    val confirmationFramesRequired: Int = 1,
     val interventionBehavior: String = "PROTECTIVE_OVERLAY",
     val sensitivityMode: String = "BALANCED",
     val interveneOnSuggestiveInStrict: Boolean = true,
@@ -134,9 +134,9 @@ object LocalStorage {
             } else {
                 excludedSet.addAll(UserPreferencesData().excludedPackages)
             }
-            val isPreMilestone3 = !obj.has("sensitivityMode")
+            val needsFastMigration = !obj.optBoolean("fastAdaptiveV2", false)
             val rawBehavior = obj.optString("interventionBehavior", "PROTECTIVE_OVERLAY")
-            val effectiveBehavior = if (isPreMilestone3 ||
+            val effectiveBehavior = if (needsFastMigration ||
                 rawBehavior == "WARNING_BANNER_FUTURE" ||
                 rawBehavior == "STATUS_NOTIFICATION"
             ) {
@@ -144,19 +144,26 @@ object LocalStorage {
             } else {
                 rawBehavior
             }
-            val effectiveConfirmFrames = if (isPreMilestone3) {
-                2
-            } else {
-                obj.optInt("confirmationFramesRequired", 2).coerceIn(1, 10)
-            }
             val loaded = UserPreferencesData(
                 protectionEnabled = obj.optBoolean("protectionEnabled", true),
                 excludedPackages = excludedSet,
-                samplingIntervalMs = obj.optLong("samplingIntervalMs", 2000L).coerceAtLeast(1050L),
-                debounceDelayMs = obj.optLong("debounceDelayMs", 550L).coerceIn(150L, 5000L),
+                samplingIntervalMs = if (needsFastMigration) {
+                    1100L
+                } else {
+                    obj.optLong("samplingIntervalMs", 1100L).coerceAtLeast(1050L)
+                },
+                debounceDelayMs = if (needsFastMigration) {
+                    220L
+                } else {
+                    obj.optLong("debounceDelayMs", 220L).coerceIn(120L, 5000L)
+                },
                 preferWindowCapture = obj.optBoolean("preferWindowCapture", true),
-                confidenceThreshold = obj.optDouble("confidenceThreshold", 0.72).toFloat().coerceIn(0.3f, 0.99f),
-                confirmationFramesRequired = effectiveConfirmFrames,
+                confidenceThreshold = if (needsFastMigration) {
+                    0.60f
+                } else {
+                    obj.optDouble("confidenceThreshold", 0.60).toFloat().coerceIn(0.3f, 0.99f)
+                },
+                confirmationFramesRequired = 1,
                 interventionBehavior = effectiveBehavior,
                 sensitivityMode = obj.optString("sensitivityMode", "BALANCED").uppercase(),
                 interveneOnSuggestiveInStrict = obj.optBoolean("interveneOnSuggestiveInStrict", true),
@@ -165,7 +172,7 @@ object LocalStorage {
                 mockClassifierProfile = obj.optString("mockClassifierProfile", "DETERMINISTIC_SAFE"),
                 allowSelfPackageInDiagnostics = obj.optBoolean("allowSelfPackageInDiagnostics", true)
             )
-            if (isPreMilestone3) {
+            if (needsFastMigration) {
                 savePreferencesInternal(loaded)
             }
             loaded
@@ -278,6 +285,7 @@ object LocalStorage {
             put("dismissCooldownSeconds", prefs.dismissCooldownSeconds)
             put("mockClassifierProfile", prefs.mockClassifierProfile)
             put("allowSelfPackageInDiagnostics", prefs.allowSelfPackageInDiagnostics)
+            put("fastAdaptiveV2", true)
         }
         sp.edit().putString(KEY_USER_PREFS, obj.toString()).apply()
     }
