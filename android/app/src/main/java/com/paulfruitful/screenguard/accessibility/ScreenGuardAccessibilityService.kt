@@ -521,16 +521,19 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         val captureStartNs = PipelineTelemetry.nowNs()
         val eventToCaptureStartMs = PipelineTelemetry.msBetween(originEventAtNs, captureStartNs)
 
-        // Refresh active application windowId from in-parcel service.windows (< 0.2 ms, zero node IPC)
-        // so sub-window IDs in X/Twitter or Instagram never pass an uncapturable sub-window ID.
-        val fastWin = ActiveWindowResolver.resolve(
-            service = this,
-            event = null,
-            fallbackPackage = currentForegroundPackage,
-            fallbackWindowId = currentWindowId
-        )
-        if (fastWin.windowId >= 0) {
-            currentWindowId = fastWin.windowId
+        // Only fall back to service.windows when we don't already have the foreground app's
+        // exact windowId from onAccessibilityEvent (prevents floating overlays like
+        // com.miui.screenrecorder from replacing the underlying app's windowId!).
+        if (currentWindowId < 0) {
+            val fastWin = ActiveWindowResolver.resolve(
+                service = this,
+                event = null,
+                fallbackPackage = currentForegroundPackage,
+                fallbackWindowId = currentWindowId
+            )
+            if (fastWin.windowId >= 0) {
+                currentWindowId = fastWin.windowId
+            }
         }
 
         val outcome = AccessibilityScreenshotCapturer.captureAndProcess(

@@ -433,11 +433,11 @@ class LiteRtNsfwClassifier(
                     }
 
                     val nativeRoiConfirmed =
-                        (centerS1.porn >= 0.34f && actionS1.porn >= 0.52f) ||
-                            (maxCropPorn >= 0.62f && (minCropPorn >= 0.18f || origS1.porn >= 0.01f || origS1.sexy >= 0.015f || s2CropNsfw >= 0.35f)) ||
-                            (maxCropPorn >= 0.24f && s2CropNsfw >= 0.48f) ||
-                            ((maxCropPorn + maxCropSexy) >= 0.42f && maxCropPorn >= 0.12f && s2CropNsfw >= 0.52f) ||
-                            (textSignal.adultScore >= 0.35f && (maxCropPorn >= 0.22f || s2CropNsfw >= 0.38f)) ||
+                        (centerS1.porn >= 0.42f && actionS1.porn >= 0.65f && (s2CropNsfw >= 0.16f || origS1.porn >= 0.08f)) ||
+                            (maxCropPorn >= 0.72f && s2CropNsfw >= 0.20f) ||
+                            (maxCropPorn >= 0.28f && s2CropNsfw >= 0.46f) ||
+                            ((maxCropPorn + maxCropSexy) >= 0.45f && maxCropPorn >= 0.14f && s2CropNsfw >= 0.50f) ||
+                            (textSignal.adultScore >= 0.35f && (maxCropPorn >= 0.24f || s2CropNsfw >= 0.38f)) ||
                             (textSignal.isExplicitPornDomain && maxCropPorn >= 0.12f)
 
                     if (nativeRoiConfirmed && (candidateS1.porn + 0.5f * candidateS1.sexy) > (effectiveS1.porn + 0.5f * effectiveS1.sexy)) {
@@ -747,15 +747,21 @@ class LiteRtNsfwClassifier(
                 (textSignal.adultScore >= 0.65f && (pPorn + pSexy >= 0.10f || s2Nsfw >= 0.22f)) ||
                 (textSignal.adultScore >= 0.45f && (pPorn >= 0.22f || (pPorn + pSexy) >= 0.32f))
 
-        // Breastfeeding / infant maternal care false-positive guard:
-        // When Stage 1 has moderate `porn` (0.15..0.32) with near-zero `sexy` (< 0.03) and high `neutral` (> 0.68),
-        // AND Stage 2 ResNet-50 `nsfw` is below 0.55, keep as NON_EXPLICIT rather than NUDITY.
+        // Breastfeeding / infant maternal care / musical instrument or bare-arm crop false-positive guard:
+        // When the full-screen unenhanced frame has very low porn (< 0.12) and high neutral (>= 0.72),
+        // AND Stage 2 ResNet-50 is strongly SFW (`s2Nsfw < 0.14`), never trigger a false positive.
         val isLikelyNonSexualSkinExposure =
-            !illum.isLowLight &&
+            (!illum.isLowLight &&
                 pNeutral >= 0.70f &&
                 pSexy < 0.025f &&
                 pPorn < 0.30f &&
-                (!s2Triggered || s2Nsfw < 0.52f)
+                (!s2Triggered || s2Nsfw < 0.52f)) ||
+                (s2Triggered &&
+                    s2Nsfw < 0.14f &&
+                    origS1.porn < 0.12f &&
+                    origS1.sexy < 0.08f &&
+                    pPorn < 0.85f &&
+                    !hasExplicitTextContext)
 
         // Ordinary dark scene false-positive guard:
         // If the original unenhanced frame had near-zero porn (< 0.025) and near-zero sexy (< 0.04)
