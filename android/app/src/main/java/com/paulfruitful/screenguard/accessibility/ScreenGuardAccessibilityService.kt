@@ -267,6 +267,20 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 )
 
                 DetectionEngine.ensureModelLoaded(applicationContext)
+                if (prefs.protectionEnabled &&
+                    currentForegroundPackage.isNotBlank() &&
+                    currentForegroundPackage != "None" &&
+                    currentForegroundPackage != SELF_PACKAGE
+                ) {
+                    frameScheduler.request(
+                        FrameTrigger(
+                            eventAtNs = PipelineTelemetry.nowNs(),
+                            settleMs = 80L,
+                            minIntervalMs = 0L,
+                            isAppSwitch = true
+                        )
+                    )
+                }
             } catch (_: Exception) {
             }
         }
@@ -298,6 +312,9 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
 
         val eventPkg = event.packageName?.toString()
         if (!eventPkg.isNullOrBlank() && ActiveWindowResolver.isTransientSystemOverlay(eventPkg)) return
+
+        // Ingest inline event text/captions in < 0.02 ms (zero Binder IPC)
+        ScreenTextContextAnalyzer.onAccessibilityEventInline(event)
 
         val prefs = LocalStorage.getPreferences(applicationContext)
         val fastResolved = ActiveWindowResolver.resolveFastFromEventInline(

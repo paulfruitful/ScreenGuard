@@ -59,10 +59,13 @@ object ActiveWindowResolver {
             lower.endsWith(".overlay")
     }
 
+    @Volatile
+    private var lastKnownPasswordFocused: Boolean = false
+
     /**
      * Ultra-fast (< 0.05 ms) main-thread resolution that reads ONLY fields already inside the
      * [AccessibilityEvent] parcel without making any synchronous Binder IPC calls (`service.windows`
-     * or `window.root`). Prevents main-thread ANRs when the protective overlay is receiving touch events.
+     * or `window.root`). Prevents main-thread ANRs and 5000ms AccessibilityInteractionClient stalls.
      */
     fun resolveFastFromEventInline(
         context: Context,
@@ -71,6 +74,7 @@ object ActiveWindowResolver {
         fallbackWindowId: Int
     ): ResolvedWindowContext {
         if (event.isPassword) {
+            lastKnownPasswordFocused = true
             val pkg = event.packageName?.toString()?.takeIf { !isTransientSystemOverlay(it) } ?: fallbackPackage
             return ResolvedWindowContext(
                 packageName = pkg,
@@ -78,6 +82,10 @@ object ActiveWindowResolver {
                 windowId = event.windowId.takeIf { it >= 0 } ?: fallbackWindowId,
                 isPasswordOrSensitiveInputActive = true
             )
+        } else if (event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) {
+            lastKnownPasswordFocused = false
         }
         val eventPkg = event.packageName?.toString()
         if (eventPkg.isNullOrBlank() || isTransientSystemOverlay(eventPkg) || isSelfOverlayEvent(event)) {
@@ -106,54 +114,30 @@ object ActiveWindowResolver {
             packageName = resolvedPkg,
             appLabel = getAppLabel(context, resolvedPkg),
             windowId = resolvedWinId,
-            isPasswordOrSensitiveInputActive = false
+            isPasswordOrSensitiveInputActive = lastKnownPasswordFocused
         )
     }
 
+    /**
+     * Non-blocking (< 0.3 ms) window ID & package resolution.
+     *
+     * CRITICAL FIX: Never calls `win.root`, `service.rootInActiveWindow`, or `root.findFocus()`,
+     * because those invoke `AccessibilityInteractionClient.waitForResultTimedLocked(5000ms)` and
+     * block for 5,000-20,000 ms whenever X/Twitter or Instagram is playing a 60fps video!
+     * Instead, reads only the in-parcel `AccessibilityWindowInfo.id`, `type`, `isActive`,
+     * `isFocused`, and `boundsInScreen` metadata.
+     */
     fun resolve(
         service: AccessibilityService,
         event: AccessibilityEvent?,
         fallbackPackage: String,
         fallbackWindowId: Int
     ): ResolvedWindowContext {
-        val eventPkg = event?.packageName?.toString()
-        if (event != null &&
-            (!eventPkg.isNullOrBlank() && isTransientSystemOverlay(eventPkg) || isSelfOverlayEvent(event))
-        ) {
-            return ResolvedWindowContext(
-                packageName = fallbackPackage,
-                appLabel = getAppLabel(service, fallbackPackage),
-                windowId = fallbackWindowId,
-                isPasswordOrSensitiveInputActive = false
-            )
+        if (event != null) {
+            return resolveFastFromEventInline(service, event, fallbackPackage, fallbackWindowId)
         }
 
-        if (event?.isPassword == true) {
-            val pkg = eventPkg?.takeIf { !isTransientSystemOverlay(it) } ?: fallbackPackage
-            return ResolvedWindowContext(
-                packageName = pkg,
-                appLabel = getAppLabel(service, pkg),
-                windowId = event.windowId.takeIf { it >= 0 } ?: fallbackWindowId,
-                isPasswordOrSensitiveInputActive = true
-            )
-        }
-
-        var candidatePackage: String? = null
-        var candidateWindowId: Int = -1
-        var passwordFocused = false
-
-        // 0. If this is an explicit TYPE_WINDOW_STATE_CHANGED from a real application package,
-        // prioritize that newly opened activity package so transition frames don't read the closing window.
-        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            !isTransientSystemOverlay(eventPkg)
-        ) {
-            candidatePackage = eventPkg
-            if (event.windowId >= 0) {
-                candidateWindowId = event.windowId
-            }
-        }
-
-        // 1. Inspect interactive windows for the primary focused, active, non-PiP APPLICATION window
+        var candidateWindowId: Int = fallbackWindowId
         try {
             val windows = service.windows
             if (!windows.isNullOrEmpty()) {
@@ -168,22 +152,7 @@ object ActiveWindowResolver {
                         !isPip
                 }
 
-                // If we already know the new package from TYPE_WINDOW_STATE_CHANGED, prefer its window
-                val matchingWindow = if (!candidatePackage.isNullOrBlank()) {
-                    activeAppWindows.firstOrNull { win ->
-                        val p = try {
-                            win.root?.packageName?.toString()
-                        } catch (_: Exception) {
-                            null
-                        }
-                        p == candidatePackage
-                    }
-                } else {
-                    null
-                }
-
-                // Otherwise prefer focused window with the largest screen area
-                val primaryWindow = matchingWindow ?: activeAppWindows
+                val primaryWindow = activeAppWindows
                     .sortedWith(
                         compareByDescending<AccessibilityWindowInfo> { it.isFocused }
                             .thenByDescending { win ->
@@ -194,75 +163,26 @@ object ActiveWindowResolver {
                     )
                     .firstOrNull()
 
-                if (primaryWindow != null) {
-                    val root = try {
-                        primaryWindow.root
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val winPkg = root?.packageName?.toString()
-                    if (candidatePackage.isNullOrBlank() && !isTransientSystemOverlay(winPkg)) {
-                        candidatePackage = winPkg
-                        candidateWindowId = primaryWindow.id
-                    } else if (winPkg == candidatePackage || candidateWindowId < 0) {
-                        candidateWindowId = primaryWindow.id
-                    }
-                    if (root != null) {
-                        passwordFocused = isPasswordInputFocused(root)
-                    }
+                if (primaryWindow != null && primaryWindow.id >= 0) {
+                    candidateWindowId = primaryWindow.id
                 }
             }
         } catch (_: Exception) {
         }
 
-        // 2. If primaryWindow.root was temporarily null, query service.rootInActiveWindow
-        // (ignoring SELF_PACKAGE unless MainActivity was explicitly opened)
-        if (candidatePackage.isNullOrBlank()) {
-            try {
-                val activeRoot = service.rootInActiveWindow
-                if (activeRoot != null) {
-                    val rootPkg = activeRoot.packageName?.toString()
-                    if (!isTransientSystemOverlay(rootPkg) &&
-                        (rootPkg != SELF_PACKAGE || eventPkg == SELF_PACKAGE && !isSelfOverlayEvent(event))
-                    ) {
-                        candidatePackage = rootPkg
-                        if (candidateWindowId < 0 && activeRoot.windowId >= 0) {
-                            candidateWindowId = activeRoot.windowId
-                        }
-                        if (!passwordFocused) {
-                            passwordFocused = isPasswordInputFocused(activeRoot)
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-            }
-        }
-
-        // 3. Fallback to event packageName ONLY on TYPE_WINDOW_STATE_CHANGED
-        if (candidatePackage.isNullOrBlank() &&
-            !isTransientSystemOverlay(eventPkg) &&
-            (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-                fallbackPackage == "None" ||
-                eventPkg == fallbackPackage)
-        ) {
-            candidatePackage = eventPkg
-            if (candidateWindowId < 0 && event != null && event.windowId >= 0) {
-                candidateWindowId = event.windowId
-            }
-        }
-
-        val finalPackage = candidatePackage?.takeIf { it.isNotBlank() } ?: fallbackPackage
-        val finalWindowId = when {
-            candidateWindowId >= 0 -> candidateWindowId
-            event != null && event.windowId >= 0 && eventPkg == finalPackage -> event.windowId
-            else -> fallbackWindowId
+        val finalPackage = if (fallbackPackage.isNotBlank() && fallbackPackage != "None") {
+            fallbackPackage
+        } else if (candidateWindowId >= 0) {
+            "active_window_$candidateWindowId"
+        } else {
+            "None"
         }
 
         return ResolvedWindowContext(
             packageName = finalPackage,
             appLabel = getAppLabel(service, finalPackage),
-            windowId = finalWindowId,
-            isPasswordOrSensitiveInputActive = passwordFocused
+            windowId = candidateWindowId,
+            isPasswordOrSensitiveInputActive = lastKnownPasswordFocused
         )
     }
 

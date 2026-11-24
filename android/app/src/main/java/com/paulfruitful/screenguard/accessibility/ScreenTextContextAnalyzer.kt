@@ -128,155 +128,134 @@ object ScreenTextContextAnalyzer {
     @Volatile
     private var latestSignal: ScreenTextSignal = ScreenTextSignal()
 
+    @Volatile
+    private var rollingTextBuffer: StringBuilder = StringBuilder(512)
+
+    @Volatile
+    private var rollingPackage: String = ""
+
     fun getLatestSignal(): ScreenTextSignal = latestSignal
+
+    /**
+     * Zero-IPC inline event text ingestion (< 0.02 ms).
+     * Extracts text and contentDescription directly from incoming [android.view.accessibility.AccessibilityEvent]
+     * parcels without calling `AccessibilityInteractionClient.waitForResultTimedLocked(5000ms)`.
+     */
+    fun onAccessibilityEventInline(event: android.view.accessibility.AccessibilityEvent) {
+        if (event.isPassword) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == "com.paulfruitful.screenguard") return
+
+        val startNs = SystemClock.elapsedRealtimeNanos()
+        try {
+            if (pkg != rollingPackage) {
+                rollingPackage = pkg
+                rollingTextBuffer = StringBuilder(512)
+                latestSignal = ScreenTextSignal()
+            }
+            val sb = rollingTextBuffer
+            if (sb.length > 900) {
+                sb.delete(0, sb.length - 450)
+            }
+            var added = false
+            val texts = event.text
+            if (!texts.isNullOrEmpty()) {
+                for (t in texts) {
+                    if (!t.isNullOrBlank() && t.length <= 240) {
+                        sb.append(t).append(' ')
+                        added = true
+                    }
+                }
+            }
+            val desc = event.contentDescription
+            if (!desc.isNullOrBlank() && desc.length <= 180) {
+                sb.append(desc).append(' ')
+                added = true
+            }
+            if (added) {
+                val durMs = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000L)
+                latestSignal = scoreText(sb.toString().lowercase(), false, durMs)
+            }
+        } catch (_: Exception) {
+        }
+    }
 
     fun analyzeActiveApplicationWindow(
         service: AccessibilityService,
         targetPackageName: String
     ): ScreenTextSignal {
-        // Phase A Guard: Refuse to perform Binder IPC window/node traversal on the main thread
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            return latestSignal
+        // Return the zero-IPC inline signal immediately so we never trigger 5,000ms
+        // AccessibilityInteractionClient.waitForResultTimedLocked stalls on video players!
+        return latestSignal
+    }
+
+    private fun scoreText(
+        combinedLower: String,
+        subtitleNodeFound: Boolean,
+        durMs: Long
+    ): ScreenTextSignal {
+        if (combinedLower.isBlank()) {
+            return ScreenTextSignal(hasVisibleText = false, scanDurationMs = durMs)
+        }
+        val matched = mutableListOf<String>()
+        var isPornDomain = false
+        var hardcoreScore = 0f
+        var adultScore = 0f
+        var isBenignEducational = false
+
+        for (benign in BENIGN_EDUCATIONAL_OR_DIALOGUE_TERMS) {
+            if (combinedLower.contains(benign)) {
+                isBenignEducational = true
+                break
+            }
         }
 
-        val startNs = SystemClock.elapsedRealtimeNanos()
-        val deadlineElapsedMs = SystemClock.elapsedRealtime() + MAX_SCAN_BUDGET_MS
-
-        try {
-            val root = findApplicationWindowRoot(service, targetPackageName)
-            if (root == null) {
-                val empty = ScreenTextSignal(
-                    scanDurationMs = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000L)
-                )
-                latestSignal = empty
-                return empty
+        for (domain in EXPLICIT_PORN_DOMAINS) {
+            if (combinedLower.contains(domain)) {
+                isPornDomain = true
+                hardcoreScore = 0.96f
+                adultScore = 0.96f
+                matched.add(domain.trimEnd('.'))
             }
-
-            val sb = StringBuilder(512)
-            var visited = 0
-            var subtitleNodeFound = false
-            val queue = ArrayDeque<AccessibilityNodeInfo>(MAX_NODES_TO_SCAN)
-            queue.add(root)
-
-            while (queue.isNotEmpty() &&
-                visited < MAX_NODES_TO_SCAN &&
-                SystemClock.elapsedRealtime() < deadlineElapsedMs
-            ) {
-                val node = queue.removeFirst()
-                visited++
-
-                if (!node.isPassword && !(node.isEditable && node.isFocused)) {
-                    val viewId = try {
-                        node.viewIdResourceName ?: ""
-                    } catch (_: Exception) {
-                        ""
-                    }
-                    if (viewId.contains("subtitle", ignoreCase = true) ||
-                        viewId.contains("caption", ignoreCase = true) ||
-                        viewId.contains("cues", ignoreCase = true)
-                    ) {
-                        subtitleNodeFound = true
-                    }
-
-                    val text = node.text
-                    if (!text.isNullOrBlank() && text.length <= 220) {
-                        sb.append(text).append(' ')
-                    }
-                    val desc = node.contentDescription
-                    if (!desc.isNullOrBlank() && desc.length <= 140) {
-                        sb.append(desc).append(' ')
-                    }
-                }
-
-                if (SystemClock.elapsedRealtime() >= deadlineElapsedMs) break
-
-                val childCount = minOf(node.childCount, 8)
-                for (i in 0 until childCount) {
-                    if (visited + queue.size >= MAX_NODES_TO_SCAN) break
-                    if (SystemClock.elapsedRealtime() >= deadlineElapsedMs) break
-                    val child = try {
-                        node.getChild(i)
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (child != null) {
-                        queue.add(child)
-                    }
-                }
-            }
-
-            val durMs = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - startNs) / 1_000_000L)
-            val combinedLower = sb.toString().lowercase()
-            if (combinedLower.isBlank()) {
-                val empty = ScreenTextSignal(hasVisibleText = false, scanDurationMs = durMs)
-                latestSignal = empty
-                return empty
-            }
-
-            val matched = mutableListOf<String>()
-            var isPornDomain = false
-            var hardcoreScore = 0f
-            var adultScore = 0f
-            var isBenignEducational = false
-
-            for (benign in BENIGN_EDUCATIONAL_OR_DIALOGUE_TERMS) {
-                if (combinedLower.contains(benign)) {
-                    isBenignEducational = true
-                    break
-                }
-            }
-
-            for (domain in EXPLICIT_PORN_DOMAINS) {
-                if (combinedLower.contains(domain)) {
-                    isPornDomain = true
-                    hardcoreScore = 0.96f
-                    adultScore = 0.96f
-                    matched.add(domain.trimEnd('.'))
-                }
-            }
-
-            for (term in HARDCORE_EXPLICIT_TERMS) {
-                if (containsWordOrSubstring(combinedLower, term)) {
-                    hardcoreScore = maxOf(hardcoreScore, 0.88f)
-                    adultScore = maxOf(adultScore, 0.88f)
-                    if (matched.size < 4) matched.add(term)
-                }
-            }
-
-            var contextualHits = 0
-            for (term in CONTEXTUAL_SEXUAL_TERMS) {
-                if (containsWordOrSubstring(combinedLower, term)) {
-                    contextualHits++
-                    if (matched.size < 4) matched.add(term)
-                }
-            }
-
-            if (contextualHits >= 2) {
-                adultScore = maxOf(adultScore, 0.72f)
-            } else if (contextualHits == 1) {
-                adultScore = maxOf(adultScore, 0.48f)
-            }
-
-            if (isBenignEducational && !isPornDomain) {
-                adultScore *= 0.25f
-                hardcoreScore = 0f
-            }
-
-            val signal = ScreenTextSignal(
-                hasVisibleText = true,
-                adultScore = adultScore.coerceIn(0f, 1f),
-                hardcoreScore = hardcoreScore.coerceIn(0f, 1f),
-                isExplicitPornDomain = isPornDomain,
-                fromSubtitleNode = subtitleNodeFound,
-                isBenignEducationalOrDialogue = isBenignEducational,
-                matchedIndicators = matched.distinct(),
-                scanDurationMs = durMs
-            )
-            latestSignal = signal
-            return signal
-        } catch (_: Exception) {
-            return ScreenTextSignal()
         }
+
+        for (term in HARDCORE_EXPLICIT_TERMS) {
+            if (containsWordOrSubstring(combinedLower, term)) {
+                hardcoreScore = maxOf(hardcoreScore, 0.88f)
+                adultScore = maxOf(adultScore, 0.88f)
+                if (matched.size < 4) matched.add(term)
+            }
+        }
+
+        var contextualHits = 0
+        for (term in CONTEXTUAL_SEXUAL_TERMS) {
+            if (containsWordOrSubstring(combinedLower, term)) {
+                contextualHits++
+                if (matched.size < 4) matched.add(term)
+            }
+        }
+
+        if (contextualHits >= 2) {
+            adultScore = maxOf(adultScore, 0.72f)
+        } else if (contextualHits == 1) {
+            adultScore = maxOf(adultScore, 0.48f)
+        }
+
+        if (isBenignEducational && !isPornDomain) {
+            adultScore *= 0.25f
+            hardcoreScore = 0f
+        }
+
+        return ScreenTextSignal(
+            hasVisibleText = true,
+            adultScore = adultScore.coerceIn(0f, 1f),
+            hardcoreScore = hardcoreScore.coerceIn(0f, 1f),
+            isExplicitPornDomain = isPornDomain,
+            fromSubtitleNode = subtitleNodeFound,
+            isBenignEducationalOrDialogue = isBenignEducational,
+            matchedIndicators = matched.distinct(),
+            scanDurationMs = durMs
+        )
     }
 
     private fun containsWordOrSubstring(haystack: String, needle: String): Boolean {
