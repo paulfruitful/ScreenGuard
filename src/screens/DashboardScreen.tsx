@@ -23,6 +23,7 @@ import {
   MonitoringStatus,
   UserPreferences,
 } from '../types/screenguard';
+import {ScreenGuardNative} from '../services/ScreenGuardNative';
 
 interface DashboardScreenProps {
   status: MonitoringStatus;
@@ -46,8 +47,10 @@ export function DashboardScreen({
   onRefresh,
 }: DashboardScreenProps) {
   const permissionGranted = status.accessibilityPermissionGranted;
+  const serviceStoppedBySystem = permissionGranted && !status.serviceConnected;
   const serviceActive = permissionGranted && status.serviceConnected;
   const monitoringActive = serviceActive && status.protectionEnabled;
+  const batteryOptIgnored = status.batteryOptimizationIgnored !== false;
 
   const summary = status.protectionSummary;
   const itemsBlocked =
@@ -100,7 +103,7 @@ export function DashboardScreen({
   }, [activityLogs]);
 
   const handlePrimaryAction = () => {
-    if (!permissionGranted) {
+    if (!permissionGranted || serviceStoppedBySystem) {
       onOpenAccessibilitySettings();
       return;
     }
@@ -139,7 +142,7 @@ export function DashboardScreen({
         <View
           style={[
             styles.statusPill,
-            !permissionGranted
+            !permissionGranted || serviceStoppedBySystem
               ? styles.statusPillWarning
               : monitoringActive
               ? styles.statusPillProtected
@@ -149,7 +152,7 @@ export function DashboardScreen({
             <Text
               style={[
                 styles.statusIconText,
-                !permissionGranted
+                !permissionGranted || serviceStoppedBySystem
                   ? {color: '#B45309'}
                   : monitoringActive
                   ? {color: colors.success}
@@ -161,6 +164,8 @@ export function DashboardScreen({
           <Text style={styles.statusPillText}>
             {!permissionGranted
               ? 'Setup Needed'
+              : serviceStoppedBySystem
+              ? 'Restart Needed'
               : monitoringActive
               ? 'Protected'
               : 'Paused'}
@@ -170,6 +175,8 @@ export function DashboardScreen({
         <Text style={styles.heroTitle}>
           {!permissionGranted
             ? 'Turn on Screen Guard'
+            : serviceStoppedBySystem
+            ? 'Service stopped by phone'
             : monitoringActive
             ? 'Your device is safe'
             : 'Protection is paused'}
@@ -178,6 +185,8 @@ export function DashboardScreen({
         <Text style={styles.heroSubtitle}>
           {!permissionGranted
             ? 'Enable Screen Guard in Accessibility Settings to start blocking inappropriate content automatically.'
+            : serviceStoppedBySystem
+            ? 'Xiaomi/Android stopped the background service when the app was closed. Tap below to toggle Screen Guard off and back on in Accessibility.'
             : monitoringActive
             ? 'Screen Guard is actively blocking inappropriate content.'
             : 'Tap Resume Protection below whenever you are ready to continue.'}
@@ -190,7 +199,7 @@ export function DashboardScreen({
             styles.goldButton,
             pressed && {backgroundColor: colors.goldPressed},
           ]}>
-          {permissionGranted ? (
+          {permissionGranted && !serviceStoppedBySystem ? (
             monitoringActive ? (
               <PauseBarsIcon size={15} color={colors.goldText} />
             ) : (
@@ -200,11 +209,38 @@ export function DashboardScreen({
           <Text style={styles.goldButtonText}>
             {!permissionGranted
               ? 'Enable Protection'
+              : serviceStoppedBySystem
+              ? 'Fix in Accessibility Settings'
               : monitoringActive
               ? 'Pause Protection'
               : 'Resume Protection'}
           </Text>
         </Pressable>
+
+        {!batteryOptIgnored && (
+          <Pressable
+            onPress={() => {
+              ScreenGuardNative.requestIgnoreBatteryOptimizations().catch(
+                () => {},
+              );
+            }}
+            style={[
+              styles.goldButton,
+              {
+                marginTop: spacing.sm,
+                backgroundColor: 'rgba(255,255,255,0.16)',
+                paddingVertical: 11,
+              },
+            ]}>
+            <Text
+              style={[
+                styles.goldButtonText,
+                {color: '#FFFFFF', fontSize: 13.5},
+              ]}>
+              Keep Alive in Background (Disable Battery Kill)
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {/* 3-Column White Stats Card */}

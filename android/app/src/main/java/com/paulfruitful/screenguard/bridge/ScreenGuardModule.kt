@@ -1,8 +1,10 @@
 package com.paulfruitful.screenguard.bridge
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -95,6 +97,50 @@ class ScreenGuardModule(
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERR_OPEN_SETTINGS", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun isBatteryOptimizationIgnored(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                promise.resolve(true)
+                return
+            }
+            val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            val ignored = pm?.isIgnoringBatteryOptimizations(reactContext.packageName) ?: false
+            promise.resolve(ignored)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
+
+    @ReactMethod
+    fun requestIgnoreBatteryOptimizations(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                val alreadyIgnored = pm?.isIgnoringBatteryOptimizations(reactContext.packageName) ?: false
+                if (!alreadyIgnored) {
+                    val intent = Intent(
+                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${reactContext.packageName}")
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    try {
+                        reactContext.startActivity(intent)
+                    } catch (_: Exception) {
+                        val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        reactContext.startActivity(fallback)
+                    }
+                }
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_BATTERY_OPT", e.message, e)
         }
     }
 
@@ -564,6 +610,9 @@ class ScreenGuardModule(
             .isAccessibilityServiceEnabledInSettings(appCtx)
         val overlayPermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
             Settings.canDrawOverlays(appCtx)
+        val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val batteryOptIgnored = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            (pm?.isIgnoringBatteryOptimizations(appCtx.packageName) == true)
         val serviceConnected = ScreenGuardAccessibilityService.isServiceConnected()
         val monitoringActive = permissionGranted && serviceConnected && prefs.protectionEnabled
         val latestClassification = DetectionEngine.getLatestResult()
@@ -596,6 +645,7 @@ class ScreenGuardModule(
         return Arguments.createMap().apply {
             putBoolean("accessibilityPermissionGranted", permissionGranted)
             putBoolean("overlayPermissionGranted", overlayPermissionGranted)
+            putBoolean("batteryOptimizationIgnored", batteryOptIgnored)
             putBoolean("serviceConnected", serviceConnected)
             putBoolean("protectionEnabled", prefs.protectionEnabled)
             putBoolean("monitoringActive", monitoringActive)

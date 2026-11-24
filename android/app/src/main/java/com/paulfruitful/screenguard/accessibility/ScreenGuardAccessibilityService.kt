@@ -225,6 +225,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
 
         val prefs = LocalStorage.getPreferences(applicationContext)
 
+        MonitoringNotificationManager.promoteToForeground(
+            service = this,
+            currentPackage = currentForegroundPackage
+        )
         MonitoringNotificationManager.updateStatusNotification(
             context = applicationContext,
             active = prefs.protectionEnabled,
@@ -736,6 +740,17 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 packageName = currentForegroundPackage
             )
         )
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // Keep the AccessibilityService in foreground priority if the user swipes MainActivity
+        // away from the Xiaomi/Android Recents screen (SwipeUpClean).
+        MonitoringNotificationManager.promoteToForeground(
+            service = this,
+            currentPackage = currentForegroundPackage
+        )
+        ScreenshotProcessor.clearVolatileDebugPreview()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

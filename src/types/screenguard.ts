@@ -208,6 +208,7 @@ export interface BufferDiagnostics {
 export interface MonitoringStatus {
   accessibilityPermissionGranted: boolean;
   overlayPermissionGranted: boolean;
+  batteryOptimizationIgnored?: boolean;
   serviceConnected: boolean;
   protectionEnabled: boolean;
   monitoringActive: boolean;
