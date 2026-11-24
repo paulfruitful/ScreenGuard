@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Screen Guard v1.0.0 — Release Notes</title>
+  <style>
+    :root {
+      --royal-blue: #0C2D84;
+      --royal-blue-deep: #092266;
+      --gold: #F5B82E;
+      --gold-text: #0A1D4E;
+      --bg: #F2F5FB;
+      --surface: #FFFFFF;
+      --surface-subtle: #EEF3FA;
+      --border: #E2E8F4;
+      --text-primary: #0F1F4B;
+      --text-secondary: #5B6B8C;
+      --success: #1BB55C;
+      --accent: #1447C8;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-primary);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .hero {
+      background: linear-gradient(165deg, var(--royal-blue) 0%, var(--royal-blue-deep) 100%);
+      color: #FFFFFF;
+      padding: 56px 24px 64px;
+      border-bottom-left-radius: 32px;
+      border-bottom-right-radius: 32px;
+      text-align: center;
+    }
+
+    .hero-inner {
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    .emblem-halo {
+      width: 96px;
+      height: 96px;
+      margin: 0 auto 20px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.09);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background-color: var(--success);
+      color: #FFFFFF;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 6px 16px;
+      border-radius: 999px;
+      margin-bottom: 18px;
+      letter-spacing: 0.2px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #FFFFFF;
+    }
+
+    .hero h1 {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: -0.4px;
+      margin-bottom: 8px;
+    }
+
+    .tagline {
+      font-size: 16px;
+      color: #C7D6F8;
+      margin-bottom: 24px;
+    }
+
+    .release-meta {
+      display: inline-flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .meta-chip {
+      background: rgba(255, 255, 255, 0.14);
+      color: #FFFFFF;
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+
+    .meta-chip.gold {
+      background: var(--gold);
+      color: var(--gold-text);
+      border-color: transparent;
+    }
+
+    .container {
+      max-width: 780px;
+      margin: -28px auto 56px;
+      padding: 0 20px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 28px;
+      margin-bottom: 18px;
+      box-shadow: 0 6px 20px rgba(12, 45, 132, 0.05);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .card-title {
+      font-size: 19px;
+      font-weight: 800;
+      color: var(--text-primary);
+    }
+
+    .section-tag {
+      background: var(--surface-subtle);
+      color: var(--royal-blue);
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .lead {
+      font-size: 15px;
+      color: var(--text-secondary);
+      margin-bottom: 18px;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .feature-box {
+      background: var(--surface-subtle);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+    }
+
+    .feature-box h3 {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .feature-box p {
+      font-size: 13.5px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .list {
+      list-style: none;
+    }
+
+    .list li {
+      position: relative;
+      padding: 12px 0 12px 22px;
+      border-bottom: 1px solid var(--border);
+      font-size: 14.5px;
+      color: var(--text-secondary);
+    }
+
+    .list li:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .list li::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 20px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--royal-blue);
+    }
+
+    .list strong {
+      color: var(--text-primary);
+    }
+
+    .scripture-preview {
+      background: #F8FAFF;
+      border: 1px solid #DCE6F7;
+      border-radius: 18px;
+      padding: 20px 22px;
+      text-align: center;
+      margin-top: 14px;
+    }
+
+    .scripture-quote {
+      font-family: Georgia, "Times New Roman", serif;
+      font-style: italic;
+      font-size: 15px;
+      color: #1E293B;
+      margin-bottom: 8px;
+    }
+
+    .scripture-ref {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--royal-blue);
+      margin-bottom: 14px;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .btn-scripture {
+      display: inline-block;
+      background: #E6EEFC;
+      border: 1px solid #BDD0F5;
+      color: var(--royal-blue);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 9px 18px;
+      border-radius: 999px;
+      text-decoration: none;
+    }
+
+    .btn-gold {
+      display: inline-block;
+      background: var(--gold);
+      color: var(--gold-text);
+      font-size: 14px;
+      font-weight: 800;
+      padding: 11px 24px;
+      border-radius: 999px;
+      text-decoration: none;
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-secondary);
+      padding-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="emblem-halo">
+        <svg width="60" height="60" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Screen Guard Shield Logo">
+          <path d="M32 5L54 13.5V32C54 46.2 44.5 55.6 32 60C19.5 55.6 10 46.2 10 32V13.5L32 5Z" fill="#0C2D84" stroke="#F5B82E" stroke-width="3.6" stroke-linejoin="round"/>
+          <path d="M32 21V41M22 31H42" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="status-pill">
+        <span class="status-dot"></span>
+        <span>Protected</span>
+      </div>
+      <h1>Screen Guard v1.0.0</h1>
+      <p class="tagline">Browse Safe. Live Free. Release Notes — November 2026</p>
+      <div class="release-meta">
+        <span class="meta-chip gold">Strict Mode Only</span>
+        <span class="meta-chip">Android 11–16</span>
+        <span class="meta-chip">100% On-Device Privacy</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">Overview</h2>
+        <span class="section-tag">Release Highlights</span>
+      </div>
+      <p class="lead">
+        Screen Guard v1.0.0 introduces a faster, stricter, and more reliable system-wide content protection experience designed for everyday users. Explicit photos and videos across social media, browsers, and third-party apps are covered automatically with a calm protective shield, while your screen data never leaves your phone.
+      </p>
+      <div class="feature-grid">
+        <div class="feature-box">
+          <h3>Strict Protection Policy</h3>
+          <p>Balanced mode and temporary dismiss options have been removed so protection stays consistent and firm whenever explicit content appears.</p>
+        </div>
+        <div class="feature-box">
+          <h3>Faster Social Feed Detection</h3>
+          <p>Focused video-region analysis detects explicit content in X (Twitter), Instagram, TikTok, and third-party feeds on the very first frame.</p>
+        </div>
+        <div class="feature-box">
+          <h3>Auto-Fade Recovery</h3>
+          <p>As soon as you scroll or switch back to safe content, the protective shield automatically fades away without interrupting your app.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">What Is New</h2>
+        <span class="section-tag">Features</span>
+      </div>
+      <ul class="list">
+        <li>
+          <strong>Scripture Encouragement on the Protective Shield:</strong> Whenever the shield covers explicit content, it presents a randomly selected Bible verse ministering against lust and temptation, paired with a <strong>Read Full Scripture in Bible</strong> button that opens the passage directly in your Bible app or on bible.com.
+        </li>
+        <li>
+          <strong>Direct Return to Safe Browsing:</strong> Tapping <strong>Return to Safe Browsing</strong> exits the offending post in the background and takes you straight back to the Screen Guard Home screen.
+        </li>
+        <li>
+          <strong>Refreshed Cross-in-Shield Interface:</strong> Simplified Home, Activity, Capture, and Settings screens with clear status indicators and plain-language controls for non-technical users.
+        </li>
+        <li>
+          <strong>Trusted App Exclusions:</strong> Easily exclude messaging or utility apps you trust from Settings.
+        </li>
+      </ul>
+
+      <div class="scripture-preview">
+        <p class="scripture-quote">"No temptation has overtaken you except what is common to mankind. And God is faithful; He will not let you be tempted beyond what you can bear. But when you are tempted, He will also provide a way out so that you can endure it."</p>
+        <p class="scripture-ref">— 1 Corinthians 10:13</p>
+        <div class="btn-row">
+          <span class="btn-scripture">Read Full Scripture in Bible</span>
+          <span class="btn-gold">Return to Safe Browsing</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">Reliability &amp; Performance Improvements</h2>
+        <span class="section-tag">Stability</span>
+      </div>
+      <ul class="list">
+        <li>
+          <strong>Background Service Persistence:</strong> Promoted the accessibility observer to a foreground service so Android and Xiaomi HyperOS task managers keep protection active in the background without dropping into a stopped state.
+        </li>
+        <li>
+          <strong>Restart Notification on Home Screen:</strong> If your phone's battery manager ever stops the background service, the Home screen clearly alerts you with a one-tap link to restore it.
+        </li>
+        <li>
+          <strong>Zero-Stall Capture Pipeline:</strong> Removed blocking background window queries and stale frame queues so continuous video playback on X, Instagram, and TikTok is inspected smoothly every second.
+        </li>
+        <li>
+          <strong>Zero-Retention Privacy Guarantee:</strong> All screen checks happen transiently in device memory with no screenshots saved to storage and no audio or images uploaded.
+        </li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <div class="card-header">
+        <h2 class="card-title">Setup &amp; Compatibility</h2>
+        <span class="section-tag">Android 11+</span>
+      </div>
+      <ul class="list">
+        <li>
+          <strong>Supported Apps:</strong> Verified across X (Twitter), Instagram, TikTok, Google Chrome, YouTube, Facebook, and standard third-party Android applications.
+        </li>
+        <li>
+          <strong>System Privacy Respect:</strong> Password fields, banking screens, and private/incognito windows protected by Android remain untouched.
+        </li>
+      </ul>
+    </section>
+
+    <p class="footer">Screen Guard — Browse Safe. Live Free.</p>
+  </main>
+</body>
+</html>
