@@ -20,6 +20,20 @@ object DetectionEngine {
     private const val DUPLICATE_HASH_MAX_HAMMING_DIST = 0
     private const val DUPLICATE_CACHE_TTL_MS = 450L
 
+    /**
+     * Social & short-video apps where clothed twerking and explicit caption promos are common.
+     * On these apps, run lightweight ML Kit Pose + OCR + NLP even when Stage 1 nudity says neutral.
+     */
+    private val SOCIAL_VIDEO_PACKAGES = setOf(
+        "com.twitter.android",
+        "com.zhiliaoapp.musically",
+        "com.ss.android.ugc.trill",
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.snapchat.android",
+        "com.reddit.frontpage"
+    )
+
     @Volatile
     private var activeClassifier: ContentClassifier = MockContentClassifier()
 
@@ -196,10 +210,13 @@ object DetectionEngine {
                 lastFrameElapsedMs = nowElapsed
             }
 
-            // 3b. Run small on-device ML Kit verifiers (Face + Pose + Burned-in Caption OCR + NLP)
-            // ONLY on suspicious/borderline frames while downsampledBitmap is still alive in memory.
+            // 3b. Run small on-device ML Kit verifiers (Face + Pose + Burned-in Caption OCR + NLP):
+            // - On social/video apps: ALWAYS run so clothed twerking poses & explicit captions are never skipped.
+            // - On other apps: only run when Stage 1/2 flags a borderline/suspicious frame.
+            val isSocialVideoApp = packageName in SOCIAL_VIDEO_PACKAGES
             val needsContextVerification =
-                rawResult.predictedCategory != ContentCategory.NON_EXPLICIT.name ||
+                isSocialVideoApp ||
+                    rawResult.predictedCategory != ContentCategory.NON_EXPLICIT.name ||
                     rawResult.pornScore >= 0.14f ||
                     rawResult.sexyScore >= 0.18f ||
                     rawResult.stage2NsfwScore >= 0.30f

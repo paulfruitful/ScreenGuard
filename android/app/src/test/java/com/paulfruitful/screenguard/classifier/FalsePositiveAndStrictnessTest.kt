@@ -78,6 +78,41 @@ class FalsePositiveAndStrictnessTest {
             "Watch full h@rdc0r3 p0rn s3x t@p3 on p0rnhub"
         )
         assertEquals("EXPLICIT_SEXUAL", obfuscated.dominantClass)
+
+        val censoredTwitter = OnDeviceNlpContextClassifier.classify(
+            "If u wanna jrkkk off, lock your doors and picture my ass on your D*ck"
+        )
+        assertEquals("EXPLICIT_SEXUAL", censoredTwitter.dominantClass)
+        assertTrue(censoredTwitter.explicitSexualProb >= 0.72f)
+
+        val onlylinks = OnDeviceNlpContextClassifier.classify("Join now onlylinks.com/abbybb")
+        assertTrue(onlylinks.explicitPornDomainDetected)
+
+        val pxrnsHandle = OnDeviceNlpContextClassifier.classify("Lara Hidalgo @sweetpxrns")
+        assertEquals("EXPLICIT_SEXUAL", pxrnsHandle.dominantClass)
+    }
+
+    @Test
+    fun fullyClothedTwerking_zeroSkinVisualScore_caughtByPoseAcross3Frames() {
+        val zeroSkinVisual = VisualEvidence(
+            predictedCategory = ContentCategory.NON_EXPLICIT.name,
+            confidence = 0.94f,
+            sexyScore = 0.02f,
+            pornScore = 0.01f,
+            neutralScore = 0.94f
+        )
+        val clothedPoseCtx = ContextVerificationEvidence(
+            executed = true,
+            poseDetected = true,
+            isBentOverOrRearFacingPose = true,
+            hipProminenceScore = 0.72f,
+            hipOscillationScore = 0.45f,
+            clothedSuggestivePoseScore = 0.68f,
+            nlpScore = OnDeviceNlpContextClassifier.classify("Weekend vibe")
+        )
+        val fused = fuse(zeroSkinVisual, "Weekend vibe", clothedPoseCtx)
+        assertTrue("Fully clothed twerking pose should flag SUGGESTIVE even with 0% skin", fused.shouldIntervene)
+        assertEquals(ContentCategory.SUGGESTIVE.name, fused.finalCategory)
     }
 
     @Test

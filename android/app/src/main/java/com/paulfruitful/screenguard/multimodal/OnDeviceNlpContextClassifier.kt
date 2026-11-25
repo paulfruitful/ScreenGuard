@@ -34,7 +34,8 @@ object OnDeviceNlpContextClassifier {
         "pornhub.", "xvideos.", "xnxx.", "xhamster.", "redtube.", "youporn.",
         "spankbang.", "eporner.", "brazzers.", "chaturbate.", "stripchat.",
         "bongacams.", "cam4.", "rule34.", "nhentai.", "hanime.", "beeg.",
-        "motherless.", "hqporner.", "sxyprn.", "daftsex.", "porntrex."
+        "motherless.", "hqporner.", "sxyprn.", "daftsex.", "porntrex.",
+        "onlylinks.com", "onlyfans.com", "fansly.com"
     )
 
     private val EXPLICIT_NGRAM_WEIGHTS = mapOf(
@@ -57,9 +58,17 @@ object OnDeviceNlpContextClassifier {
         "spankbang" to 2.6f,
         "having sex" to 2.0f,
         "public sex" to 2.2f,
+        "jerk off" to 2.8f,
+        "jrk off" to 2.8f,
+        "picture my ass" to 2.6f,
+        "ass on your dick" to 3.0f,
+        "on your dick" to 2.6f,
+        "lock your doors" to 1.6f,
+        "stroke it" to 2.2f,
         "pussy" to 2.0f,
         "cock" to 1.8f,
-        "dick" to 1.6f
+        "dick" to 1.8f,
+        "porn" to 2.2f
     )
 
     private val SUGGESTIVE_PROMO_WEIGHTS = mapOf(
@@ -231,8 +240,21 @@ object OnDeviceNlpContextClassifier {
     }
 
     internal fun normalizeObfuscations(input: String): String {
-        val sb = StringBuilder(input.length)
-        for (ch in input) {
+        // 1. Decode common censored spellings before leetspeak pass
+        var text = input
+            .replace("d*ck", "dick")
+            .replace("c*ck", "cock")
+            .replace("f*ck", "fuck")
+            .replace("p*ssy", "pussy")
+            .replace("pxrns", "porn")
+            .replace("pxrn", "porn")
+            .replace("p*rn", "porn")
+            .replace("s*x", "sex")
+            .replace("a$$", "ass")
+
+        // 2. Decode leetspeak substitutions
+        val sb = StringBuilder(text.length)
+        for (ch in text) {
             sb.append(
                 when (ch) {
                     '0' -> 'o'
@@ -245,11 +267,17 @@ object OnDeviceNlpContextClassifier {
                 }
             )
         }
-        return sb.toString()
+
+        // 3. Collapse elongated letter runs (e.g. "jrkkk offf" -> "jrk of", "assss" -> "ass")
+        val collapsed = sb.toString()
+            .replace(Regex("j+r+k+"), "jrk")
+            .replace(Regex("o+f{2,}"), "off")
+            .replace(Regex("([a-z])\\1{2,}"), "$1$1")
+        return collapsed
     }
 
     private fun matchesTerm(haystack: String, needle: String): Boolean {
-        if (needle.length >= 6 || needle.contains(' ') || needle.contains('.')) {
+        if (needle.length >= 6 || needle == "porn" || needle.contains(' ') || needle.contains('.')) {
             return haystack.contains(needle)
         }
         val idx = haystack.indexOf(needle)

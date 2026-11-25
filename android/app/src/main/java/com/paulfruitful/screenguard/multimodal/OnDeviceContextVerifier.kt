@@ -145,15 +145,16 @@ object OnDeviceContextVerifier {
                 val hipWidthNorm = abs(lHip.position.x - rHip.position.x) / bitmap.width.toFloat()
 
                 // Hips prominent & centered in frame
-                val centered = hipCenterX in 0.25f..0.75f && hipCenterY in 0.30f..0.75f
-                if (centered && hipWidthNorm >= 0.16f) {
-                    hipProminence = (hipWidthNorm * 2.2f).coerceIn(0f, 1f)
+                val centered = hipCenterX in 0.20f..0.80f && hipCenterY in 0.28f..0.80f
+                if (centered && hipWidthNorm >= 0.14f) {
+                    hipProminence = (hipWidthNorm * 2.4f).coerceIn(0f, 1f)
                 }
 
                 // Bent-over or rear-facing check:
-                // - Face not visible or low likelihood (turned away from camera)
+                // - Face not visible or tiny (turned away or glancing back over shoulder while twerking)
                 // - Shoulders close to hip height (bent forward) or knees flexed close to hips
-                val faceHidden = faceCount == 0 && (nose == null || nose.inFrameLikelihood < 0.40f)
+                val faceHiddenOrTiny = (faceCount == 0 || largestFaceRatio < 0.055f) &&
+                    (nose == null || nose.inFrameLikelihood < 0.45f || largestFaceRatio < 0.055f)
                 val shoulderHipVerticalGap = if (lShoulder != null && rShoulder != null &&
                     lShoulder.inFrameLikelihood >= 0.40f && rShoulder.inFrameLikelihood >= 0.40f
                 ) {
@@ -171,17 +172,17 @@ object OnDeviceContextVerifier {
                     0.35f
                 }
 
-                val isBentForward = shoulderHipVerticalGap < 0.18f
-                val isDeepSquat = kneeHipVerticalGap < 0.18f
-                bentOverOrRear = (faceHidden && hipProminence >= 0.38f) ||
-                    (isBentForward && hipProminence >= 0.40f) ||
-                    (faceHidden && isDeepSquat && hipProminence >= 0.32f)
+                val isBentForward = shoulderHipVerticalGap < 0.20f
+                val isDeepSquat = kneeHipVerticalGap < 0.20f
+                bentOverOrRear = (faceHiddenOrTiny && hipProminence >= 0.34f) ||
+                    (isBentForward && hipProminence >= 0.36f) ||
+                    (faceHiddenOrTiny && isDeepSquat && hipProminence >= 0.30f)
 
                 // Track frame-to-frame hip vertical displacement within 2.5s window
                 val nowMs = System.currentTimeMillis()
                 if (lastHipCenterY >= 0f && (nowMs - lastHipTimestampMs) in 400L..2500L) {
                     val deltaY = abs(hipCenterY - lastHipCenterY)
-                    if (deltaY in 0.03f..0.28f && hipProminence >= 0.35f) {
+                    if (deltaY in 0.03f..0.28f && hipProminence >= 0.32f) {
                         hipOscillation = (deltaY * 4.5f).coerceIn(0f, 1f)
                     }
                 }
@@ -190,7 +191,7 @@ object OnDeviceContextVerifier {
 
                 if (!isTalkingHead && bentOverOrRear) {
                     clothedSuggestivePose =
-                        (0.55f * hipProminence + 0.25f * (if (faceHidden) 1f else 0.4f) + 0.20f * hipOscillation)
+                        (0.55f * hipProminence + 0.25f * (if (faceHiddenOrTiny) 1f else 0.45f) + 0.20f * hipOscillation)
                             .coerceIn(0f, 1f)
                 }
             }

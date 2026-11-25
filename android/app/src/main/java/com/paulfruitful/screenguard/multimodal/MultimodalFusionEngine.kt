@@ -112,15 +112,46 @@ object MultimodalFusionEngine {
             )
         }
 
-        // 1c. Clothed Twerking / Sexually Suggestive Pose Detection (ML Kit Pose + Visual + NLP):
+        // 1c. Explicit Sexual Caption / Adult Promo Text on Active Media (OCR + NLP):
+        // Catches clothed thirst-trap posts whose on-screen caption is explicitly sexual
+        // (e.g. "If u wanna jrkkk off, lock your doors and picture my ass on your D*ck", "@sweetpxrns")
+        // while still respecting educational/medical/faith/news non-sexual contexts.
+        val explicitCaptionOnMedia =
+            ctx.executed &&
+                !nlpSaysNonSexual &&
+                !(c.available && c.benignDialogueOrEducationalContext) &&
+                nlp.dominantClass == "EXPLICIT_SEXUAL" &&
+                nlp.explicitSexualProb >= 0.72f
+
+        if (explicitCaptionOnMedia) {
+            corroborating.add("NLP_EXPLICIT_CAPTION")
+            if (ctx.clothedSuggestivePoseScore >= 0.40f) corroborating.add("POSE_SUGGESTIVE")
+            val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
+            return FusedMultimodalDecision(
+                finalCategory = ContentCategory.EXPLICIT.name,
+                finalConfidence = maxOf(0.82f, nlp.explicitSexualProb).coerceIn(0f, 1f),
+                shouldIntervene = true,
+                primaryModality = "NLP_EXPLICIT_CAPTION",
+                corroboratingModalities = corroborating,
+                uncertaintyPreserved = false,
+                dialogueOnlySuppressed = false,
+                fusionExplanation = "Explicit sexual caption/handle detected by OCR+NLP (${nlp.matchedContextTags.joinToString(",")})",
+                decisionDurationMs = dur
+            )
+        }
+
+        // 1d. Clothed Twerking / Sexually Suggestive Pose Detection (ML Kit Pose + Visual + NLP):
         // Catches fully-clothed bent-over / rear-facing / hip-centered suggestive dancing across
-        // our 3-frame (~2.2s) accumulative gate while respecting non-sexual gym/workout contexts.
+        // our 3-frame (~2.2s) accumulative gate even when the nudity model sees 0% skin, while
+        // respecting non-sexual gym/workout/talking-head contexts.
         val poseIndicatesSuggestive =
             ctx.executed &&
-                ctx.clothedSuggestivePoseScore >= 0.50f &&
+                !ctx.isTalkingHeadPortrait &&
                 !nlpSaysNonSexual &&
                 !(c.available && c.benignNonSexualVisualContext) &&
-                (v.sexyScore >= 0.22f || nlp.suggestivePromoProb >= 0.48f || ctx.hipOscillationScore >= 0.35f)
+                (ctx.clothedSuggestivePoseScore >= 0.58f ||
+                    (ctx.clothedSuggestivePoseScore >= 0.46f &&
+                        (v.sexyScore >= 0.20f || nlp.suggestivePromoProb >= 0.45f || ctx.hipOscillationScore >= 0.30f)))
 
         if (poseIndicatesSuggestive &&
             (v.predictedCategory == ContentCategory.NON_EXPLICIT.name ||
@@ -128,13 +159,13 @@ object MultimodalFusionEngine {
                 v.predictedCategory == ContentCategory.SUGGESTIVE.name)
         ) {
             corroborating.add("POSE_SUGGESTIVE")
-            if (nlp.suggestivePromoProb >= 0.48f) corroborating.add("NLP_SUGGESTIVE")
+            if (nlp.suggestivePromoProb >= 0.45f) corroborating.add("NLP_SUGGESTIVE")
             val combinedPoseConf = maxOf(
                 v.sexyScore,
-                0.55f * ctx.clothedSuggestivePoseScore +
-                    0.25f * maxOf(v.sexyScore, ctx.hipOscillationScore) +
-                    0.20f * nlp.suggestivePromoProb
-            ).coerceIn(0.72f, 0.92f)
+                0.60f * ctx.clothedSuggestivePoseScore +
+                    0.20f * maxOf(v.sexyScore, ctx.hipOscillationScore) +
+                    0.20f * maxOf(nlp.suggestivePromoProb, 0.50f)
+            ).coerceIn(0.74f, 0.92f)
             val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
             return FusedMultimodalDecision(
                 finalCategory = ContentCategory.SUGGESTIVE.name,
