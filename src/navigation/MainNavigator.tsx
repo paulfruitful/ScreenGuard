@@ -14,6 +14,7 @@ import {
 } from 'react-native-safe-area-context';
 import {
   BarsIcon,
+  CameraBadgeIcon,
   HomeIcon,
   SettingsGearIcon,
   ShieldCheckIcon,
@@ -21,24 +22,32 @@ import {
 import {useScreenGuard} from '../hooks/useScreenGuard';
 import {ActivityScreen} from '../screens/ActivityScreen';
 import {DashboardScreen} from '../screens/DashboardScreen';
+import {DnsFilterScreen} from '../screens/DnsFilterScreen';
+import {ExcludedAppsScreen} from '../screens/ExcludedAppsScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
 import {TestingScreen} from '../screens/TestingScreen';
+import {UninstallProtectionScreen} from '../screens/UninstallProtectionScreen';
 import {colors, radius, spacing, typography} from '../theme/theme';
 
-export type TabKey = 'HOME' | 'ACTIVITY' | 'CAPTURE' | 'SETTINGS';
+export type TabKey = 'HOME' | 'ACTIVITY' | 'CAPTURE' | 'PROTECT' | 'SETTINGS';
 
 const TABS: {key: TabKey; label: string}[] = [
   {key: 'HOME', label: 'Home'},
   {key: 'ACTIVITY', label: 'Activity'},
   {key: 'CAPTURE', label: 'Capture'},
+  {key: 'PROTECT', label: 'Protect'},
   {key: 'SETTINGS', label: 'Settings'},
 ];
 
 export function MainNavigator() {
   const [activeTab, setActiveTab] = useState<TabKey>('HOME');
+  const [showExcludedApps, setShowExcludedApps] = useState(false);
+  const [showDnsFilter, setShowDnsFilter] = useState(false);
   const prevReturnClicksRef = useRef<number>(0);
   const {
     status,
+    accountability,
+    dnsFilterStatus,
     preferences,
     activityLogs,
     compatibilityRecords,
@@ -58,7 +67,21 @@ export function MainNavigator() {
     purgeInMemoryPreview,
     runDebounceTest,
     runDisconnectionTest,
+    getInstalledApps,
     recordCompatibilityResult,
+    enableAccountability,
+    requestAccountabilityDeactivation,
+    cancelAccountabilityDeactivation,
+    confirmAccountabilityDeactivation,
+    setAccountabilityPin,
+    activateDeviceAdmin,
+    openDeviceAdminSettings,
+    deactivateDeviceAdmin,
+    lockDeviceViaAdmin,
+    requestDnsFilterPermission,
+    startDnsFilter,
+    stopDnsFilter,
+    updateDnsFilterConfig,
   } = useScreenGuard();
 
   useEffect(() => {
@@ -90,6 +113,8 @@ export function MainNavigator() {
       case 'ACTIVITY':
         return <BarsIcon color={color} size={20} />;
       case 'CAPTURE':
+        return <CameraBadgeIcon color={color} size={20} />;
+      case 'PROTECT':
         return <ShieldCheckIcon color={color} size={20} />;
       case 'SETTINGS':
         return <SettingsGearIcon color={color} size={21} />;
@@ -115,20 +140,56 @@ export function MainNavigator() {
             styles.viewport,
             activeTab === 'HOME' && {backgroundColor: colors.royalBlue},
           ]}>
-          {activeTab === 'HOME' && (
+          {showExcludedApps && (
+            <ExcludedAppsScreen
+              excludedPackages={preferences.excludedPackages}
+              onLoadApps={getInstalledApps}
+              onUpdateExcludedPackages={packages =>
+                updatePreferences({excludedPackages: packages})
+              }
+              onClose={() => setShowExcludedApps(false)}
+            />
+          )}
+
+          {showDnsFilter && (
+            <DnsFilterScreen
+              status={dnsFilterStatus}
+              protectionLocked={accountability.active}
+              onRequestPermission={requestDnsFilterPermission}
+              onStart={startDnsFilter}
+              onStop={stopDnsFilter}
+              onUpdateConfig={updateDnsFilterConfig}
+              onClose={() => setShowDnsFilter(false)}
+            />
+          )}
+
+          {!showExcludedApps && !showDnsFilter && activeTab === 'HOME' && (
             <DashboardScreen
               status={status}
+              accountability={accountability}
+              dnsFilterStatus={dnsFilterStatus}
               preferences={preferences}
               activityLogs={activityLogs}
               onOpenAccessibilitySettings={openAccessibilitySettings}
               onToggleProtection={toggleProtection}
+              onEnableDnsFilter={async () => {
+                if (!dnsFilterStatus.prepared) {
+                  await requestDnsFilterPermission();
+                } else if (!dnsFilterStatus.active) {
+                  await startDnsFilter();
+                } else {
+                  setShowExcludedApps(false);
+                  setShowDnsFilter(true);
+                }
+              }}
               onNavigateToActivity={() => setActiveTab('ACTIVITY')}
               onNavigateToSettings={() => setActiveTab('SETTINGS')}
+              onNavigateToProtection={() => setActiveTab('PROTECT')}
               onRefresh={refreshAll}
             />
           )}
 
-          {activeTab === 'ACTIVITY' && (
+          {!showExcludedApps && !showDnsFilter && activeTab === 'ACTIVITY' && (
             <ActivityScreen
               logs={activityLogs}
               onClearLogs={clearActivityHistory}
@@ -136,7 +197,7 @@ export function MainNavigator() {
             />
           )}
 
-          {activeTab === 'CAPTURE' && (
+          {!showExcludedApps && !showDnsFilter && activeTab === 'CAPTURE' && (
             <TestingScreen
               status={status}
               compatibilityRecords={compatibilityRecords}
@@ -156,13 +217,36 @@ export function MainNavigator() {
             />
           )}
 
-          {activeTab === 'SETTINGS' && (
+          {!showExcludedApps && !showDnsFilter && activeTab === 'PROTECT' && (
+            <UninstallProtectionScreen
+              status={accountability}
+              onEnable={enableAccountability}
+              onConfirmDeactivation={confirmAccountabilityDeactivation}
+              onActivateAdmin={activateDeviceAdmin}
+              onOpenAdminSettings={openDeviceAdminSettings}
+              onDeactivateAdmin={deactivateDeviceAdmin}
+              onRefresh={refreshAll}
+            />
+          )}
+
+          {!showExcludedApps && !showDnsFilter && activeTab === 'SETTINGS' && (
             <SettingsScreen
               preferences={preferences}
+              protectionLocked={accountability.active}
               onUpdatePreferences={updatePreferences}
               onToggleProtection={toggleProtection}
               onOpenAccessibilitySettings={openAccessibilitySettings}
               onOpenOverlaySettings={openOverlaySettings}
+              onNavigateToProtection={() => setActiveTab('PROTECT')}
+              onNavigateToExcludedApps={() => {
+                setShowDnsFilter(false);
+                setShowExcludedApps(true);
+              }}
+              onNavigateToDnsFilter={() => {
+                setShowExcludedApps(false);
+                setShowDnsFilter(true);
+              }}
+              dnsFilterActive={dnsFilterStatus.active}
             />
           )}
         </View>
@@ -172,6 +256,7 @@ export function MainNavigator() {
           style={[
             styles.bottomBarShell,
             activeTab === 'HOME' && {backgroundColor: colors.royalBlue},
+            (showExcludedApps || showDnsFilter) && {display: 'none'},
           ]}>
           <View style={styles.bottomTabBar}>
             {TABS.map(tab => {

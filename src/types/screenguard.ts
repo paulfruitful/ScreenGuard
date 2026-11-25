@@ -136,6 +136,16 @@ export type ScreenGuardEvent =
       directive?: string;
       reasonSummary?: string;
       timestamp?: number;
+    }
+  | {
+      type: 'ACCOUNTABILITY_STATUS_CHANGED';
+      status: AccountabilityStatus;
+      timestamp?: number;
+    }
+  | {
+      type: 'DNS_FILTER_STATUS_CHANGED';
+      status: DnsFilterStatus;
+      timestamp?: number;
     };
 
 export type ActivityEventType =
@@ -144,7 +154,11 @@ export type ActivityEventType =
   | 'SCREENSHOT_FAILURE'
   | 'CLASSIFICATION_COMPLETED'
   | 'SUSPICIOUS_DETECTED'
-  | 'SERVICE_STATE';
+  | 'SERVICE_STATE'
+  | 'ACCOUNTABILITY'
+  | 'DEVICE_ADMIN_ENABLED'
+  | 'DEVICE_ADMIN_DISABLED'
+  | 'DEVICE_ADMIN_DISABLE_REQUESTED';
 
 export interface ActivityLogEntry {
   id: string;
@@ -166,6 +180,13 @@ export interface ActivityLogEntry {
   confirmedIntervention?: boolean;
 }
 
+/** An installed app offered in the exclusion picker. */
+export interface InstalledApp {
+  packageName: string;
+  label: string;
+  isSystem: boolean;
+}
+
 export interface UserPreferences {
   protectionEnabled: boolean;
   excludedPackages: string[];
@@ -181,6 +202,108 @@ export interface UserPreferences {
   dismissCooldownSeconds: number;
   mockClassifierProfile: MockClassifierProfile;
   allowSelfPackageInDiagnostics: boolean;
+}
+
+export type AccountabilityMode =
+  | 'OFF'
+  | 'ACCOUNTABILITY'
+  | 'ACCOUNTABILITY_DEVICE_ADMIN'
+  | 'MANAGED_DEVICE_OBSERVED';
+
+export type CommitmentDurationType =
+  | 'ONE_DAY'
+  | 'SEVEN_DAYS'
+  | 'THIRTY_DAYS'
+  | 'CUSTOM'
+  | 'NONE';
+
+export interface AccountabilityConfig {
+  durationType: CommitmentDurationType;
+  customDays: number;
+  pin: string;
+  coolingOffMinutes: number;
+}
+
+export interface EnableAccountabilityResult {
+  status: AccountabilityStatus;
+  recoveryCode: string;
+}
+
+/**
+ * Mirrors the native AccountabilityStatus snapshot exactly.
+ * `uninstallEnforcementActive` is true only when a real Device Owner policy is observed;
+ * a voluntary commitment or ordinary device administrator never sets it to true.
+ */
+export interface AccountabilityStatus {
+  active: boolean;
+  mode: AccountabilityMode | string;
+  durationType: CommitmentDurationType | string;
+  commitmentDays: number;
+  commitmentDurationMs: number;
+  startedAtMs: number;
+  endsAtMs: number;
+  remainingMs: number;
+  expired: boolean;
+  pinConfigured: boolean;
+  coolingOffMinutes: number;
+  deactivationRequested: boolean;
+  deactivationEligibleAtMs: number;
+  coolingOffRemainingMs: number;
+  recoveryCodeHint: string;
+  clockTrusted: boolean;
+  clockRollbackDetected: boolean;
+  timingNote: string;
+  deviceAdminActive: boolean;
+  deviceAdminComponent: string;
+  deviceOwnerActive: boolean;
+  profileOwnerActive: boolean;
+  managedUninstallPolicyActive: boolean;
+  technicalEnforcement: string;
+  uninstallEnforcementActive: boolean;
+  enforcementSummary: string;
+  lastEvent: string;
+  lastEventTimestampMs: number;
+}
+
+/** Milestone 5 — user-approved local DNS content filter. */
+export type DnsFilterProfile =
+  | 'CLOUDFLARE_FAMILY'
+  | 'ADGUARD_FAMILY'
+  | 'CLEANBROWSING_ADULT'
+  | 'OPENDNS_FAMILYSHIELD'
+  | 'CUSTOM'
+  | string;
+
+export interface DnsFilterStatus {
+  active: boolean;
+  prepared: boolean;
+  profile: DnsFilterProfile;
+  profileLabel: string;
+  upstream: string;
+  customDomains: string[];
+  customDomainCount: number;
+  useStarterList: boolean;
+  blockedQueries: number;
+  allowedQueries: number;
+  failedQueries: number;
+  lastEvent: string;
+  lastEventTimestampMs: number;
+  note: string;
+}
+
+export interface DnsFilterConfigInput {
+  profile: DnsFilterProfile;
+  customHost: string;
+  customDomains: string[];
+  useStarterList: boolean;
+}
+
+export interface ManagedDeviceStatus {
+  deviceOwnerActive: boolean;
+  profileOwnerActive: boolean;
+  deviceAdminActive: boolean;
+  managedUninstallPolicyActive: boolean;
+  provisioningState: 'DEVICE_OWNER_ACTIVE' | 'PROFILE_OWNER_ACTIVE' | 'NOT_ENROLLED' | string;
 }
 
 export interface BufferDiagnostics {

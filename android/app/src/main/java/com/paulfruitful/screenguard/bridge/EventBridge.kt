@@ -4,7 +4,10 @@ import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import com.paulfruitful.screenguard.accountability.AccountabilityStatus
+import com.paulfruitful.screenguard.accountability.EnableAccountabilityResult
 import com.paulfruitful.screenguard.classifier.ClassificationResult
+import com.paulfruitful.screenguard.dns.DnsFilterStatus
 import com.paulfruitful.screenguard.protection.ProtectionActivitySummary
 import com.paulfruitful.screenguard.protection.ProtectionDecision
 import java.lang.ref.WeakReference
@@ -125,6 +128,82 @@ object EventBridge {
         }
         emitRaw(payload)
     }
+
+    fun emitAccountabilityStatus(status: AccountabilityStatus) {
+        val payload = Arguments.createMap().apply {
+            putString("type", "ACCOUNTABILITY_STATUS_CHANGED")
+            putMap("status", accountabilityStatusToWritableMap(status))
+            putDouble("timestamp", System.currentTimeMillis().toDouble())
+        }
+        emitRaw(payload)
+    }
+
+    fun accountabilityStatusToWritableMap(status: AccountabilityStatus): WritableMap =
+        Arguments.createMap().apply {
+            putBoolean("active", status.active)
+            putString("mode", status.mode)
+            putString("durationType", status.durationType)
+            putInt("commitmentDays", status.commitmentDays)
+            putDouble("commitmentDurationMs", status.commitmentDurationMs.toDouble())
+            putDouble("startedAtMs", status.startedAtMs.toDouble())
+            putDouble("endsAtMs", status.endsAtMs.toDouble())
+            putDouble("remainingMs", status.remainingMs.toDouble())
+            putBoolean("expired", status.expired)
+            putBoolean("pinConfigured", status.pinConfigured)
+            putInt("coolingOffMinutes", status.coolingOffMinutes)
+            putBoolean("deactivationRequested", status.deactivationRequested)
+            putDouble("deactivationEligibleAtMs", status.deactivationEligibleAtMs.toDouble())
+            putDouble("coolingOffRemainingMs", status.coolingOffRemainingMs.toDouble())
+            putString("recoveryCodeHint", status.recoveryCodeHint)
+            putBoolean("clockTrusted", status.clockTrusted)
+            putBoolean("clockRollbackDetected", status.clockRollbackDetected)
+            putString("timingNote", status.timingNote)
+            putBoolean("deviceAdminActive", status.deviceAdminActive)
+            putString("deviceAdminComponent", status.deviceAdminComponent)
+            putBoolean("deviceOwnerActive", status.deviceOwnerActive)
+            putBoolean("profileOwnerActive", status.profileOwnerActive)
+            putBoolean("managedUninstallPolicyActive", status.managedUninstallPolicyActive)
+            putString("technicalEnforcement", status.technicalEnforcement)
+            putBoolean("uninstallEnforcementActive", status.uninstallEnforcementActive)
+            putString("enforcementSummary", status.enforcementSummary)
+            putString("lastEvent", status.lastEvent)
+            putDouble("lastEventTimestampMs", status.lastEventTimestampMs.toDouble())
+        }
+
+    fun emitDnsFilterStatus(status: DnsFilterStatus) {
+        val payload = Arguments.createMap().apply {
+            putString("type", "DNS_FILTER_STATUS_CHANGED")
+            putMap("status", dnsFilterStatusToWritableMap(status))
+            putDouble("timestamp", System.currentTimeMillis().toDouble())
+        }
+        emitRaw(payload)
+    }
+
+    fun dnsFilterStatusToWritableMap(status: DnsFilterStatus): WritableMap =
+        Arguments.createMap().apply {
+            val domains = Arguments.createArray()
+            status.customDomains.forEach { domains.pushString(it) }
+            putBoolean("active", status.active)
+            putBoolean("prepared", status.prepared)
+            putString("profile", status.profile)
+            putString("profileLabel", status.profileLabel)
+            putString("upstream", status.upstream)
+            putArray("customDomains", domains)
+            putInt("customDomainCount", status.customDomainCount)
+            putBoolean("useStarterList", status.useStarterList)
+            putDouble("blockedQueries", status.blockedQueries.toDouble())
+            putDouble("allowedQueries", status.allowedQueries.toDouble())
+            putDouble("failedQueries", status.failedQueries.toDouble())
+            putString("lastEvent", status.lastEvent)
+            putDouble("lastEventTimestampMs", status.lastEventTimestampMs.toDouble())
+            putString("note", status.note)
+        }
+
+    fun enableResultToWritableMap(result: EnableAccountabilityResult): WritableMap =
+        Arguments.createMap().apply {
+            putMap("status", accountabilityStatusToWritableMap(result.status))
+            putString("recoveryCode", result.recoveryCode)
+        }
 
     fun protectionSummaryToWritableMap(summary: ProtectionActivitySummary): WritableMap {
         val pkgArr = Arguments.createArray()

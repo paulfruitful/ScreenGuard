@@ -3,4 +3,13 @@
     <string name="accessibility_service_label">Screen Guard Content Observer</string>
     <string name="accessibility_service_summary">On-device visual content safety observer using Android Accessibility screenshot APIs</string>
     <string name="accessibility_service_description">Screen Guard observes active window changes and captures on-device accessibility screenshots in volatile memory to detect explicit imagery locally. Screenshots are never saved to disk or uploaded, and passwords or typed input are never collected. You can pause or disable Screen Guard at any time.</string>
+    <string name="device_admin_label">Screen Guard Device Administrator</string>
+    <string name="device_admin_description">Optional administrator for Screen Guard. It can lock the screen on request and reports its activation state. It does not prevent uninstall, hide management, or block Android Settings. Deactivate it in Android Settings &gt; Security &gt; Device administrators.</string>
+    <string name="dns_filter_service_label">Screen Guard DNS Filter</string>
+    <string name="dns_filter_session_name">Screen Guard DNS Filter</string>
+    <string name="dns_filter_channel_name">DNS content filter</string>
+    <string name="dns_filter_channel_description">Shows when the local DNS filter is active</string>
+    <string name="dns_filter_notification_title">DNS filter is active</string>
+    <string name="dns_filter_notification_text">Explicit sites are filtered. Tap to open Screen Guard.</string>
+    <string name="dns_filter_notification_stop">Stop filter</string>
 </resources>

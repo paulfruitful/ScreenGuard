@@ -1,12 +1,18 @@
 package com.paulfruitful.screenguard.bridge
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.net.VpnService
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import org.json.JSONObject
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.BaseActivityEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -17,9 +23,18 @@ import com.paulfruitful.screenguard.accessibility.EventDebouncer
 import com.paulfruitful.screenguard.accessibility.MonitoringNotificationManager
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
 import com.paulfruitful.screenguard.accessibility.ServiceHealthMonitor
+import com.paulfruitful.screenguard.accountability.AccountabilityConfig
+import com.paulfruitful.screenguard.accountability.AccountabilityManager
+import com.paulfruitful.screenguard.accountability.AccountabilityRules
+import com.paulfruitful.screenguard.admin.DeviceAdminController
 import com.paulfruitful.screenguard.capture.BufferReleaseTracker
 import com.paulfruitful.screenguard.capture.ProcessedScreenshotOutcome
 import com.paulfruitful.screenguard.capture.ScreenshotProcessor
+import com.paulfruitful.screenguard.dns.DnsFilterConfig
+import com.paulfruitful.screenguard.dns.DnsFilterProfiles
+import com.paulfruitful.screenguard.dns.DnsFilterState
+import com.paulfruitful.screenguard.dns.DnsFilterStatus
+import com.paulfruitful.screenguard.dns.DnsFilterVpnService
 import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
 import com.paulfruitful.screenguard.classifier.DelegateBenchmarkResult
 import com.paulfruitful.screenguard.classifier.DetectionEngine
@@ -44,14 +59,65 @@ class ScreenGuardModule(
     private val reactContext: ReactApplicationContext
 ) : ReactContextBaseJavaModule(reactContext) {
 
+    companion object {
+        private const val REQUEST_CODE_VPN_PERMISSION = 4102
+        private const val REQUEST_CODE_DEVICE_ADMIN = 4103
+    }
+
     private val moduleScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
     private val fallbackDebouncer = EventDebouncer(moduleScope)
 
+    @Volatile
+    private var pendingVpnPermissionPromise: Promise? = null
+
+    @Volatile
+    private var pendingDeviceAdminPromise: Promise? = null
+
+    private val vpnActivityEventListener = object : BaseActivityEventListener() {
+        override fun onActivityResult(
+            activity: Activity,
+            requestCode: Int,
+            resultCode: Int,
+            data: Intent?
+        ) {
+            if (requestCode == REQUEST_CODE_VPN_PERMISSION) {
+                val promise = pendingVpnPermissionPromise
+                pendingVpnPermissionPromise = null
+
+                val appCtx = reactContext.applicationContext
+                val granted = resultCode == Activity.RESULT_OK && VpnService.prepare(appCtx) == null
+                if (granted) {
+                    DnsFilterState.saveConfig(
+                        appCtx,
+                        DnsFilterState.loadConfig(appCtx).copy(enabled = true),
+                    )
+                    DnsFilterVpnService.startIfPreparedAndEnabled(appCtx)
+                }
+                EventBridge.emitDnsFilterStatus(dnsStatus())
+                promise?.resolve(granted)
+                return
+            }
+
+            if (requestCode == REQUEST_CODE_DEVICE_ADMIN) {
+                val promise = pendingDeviceAdminPromise
+                pendingDeviceAdminPromise = null
+
+                val appCtx = reactContext.applicationContext
+                val active = DeviceAdminController.isAdminActive(appCtx)
+                EventBridge.emitAccountabilityStatus(AccountabilityManager.getStatus(appCtx))
+                promise?.resolve(active)
+            }
+        }
+    }
+
     init {
         LocalStorage.init(reactContext.applicationContext)
+        AccountabilityManager.init(reactContext.applicationContext)
         DetectionEngine.init(reactContext.applicationContext)
         ProtectionCoordinator.init(reactContext.applicationContext)
         EventBridge.attachReactContext(reactContext)
+        reactContext.addActivityEventListener(vpnActivityEventListener)
+        DnsFilterVpnService.startIfPreparedAndEnabled(reactContext.applicationContext)
         moduleScope.launch {
             DetectionEngine.ensureModelLoaded(reactContext.applicationContext)
         }
@@ -60,6 +126,11 @@ class ScreenGuardModule(
     override fun getName(): String = "ScreenGuardModule"
 
     override fun invalidate() {
+        reactContext.removeActivityEventListener(vpnActivityEventListener)
+        pendingVpnPermissionPromise?.resolve(false)
+        pendingVpnPermissionPromise = null
+        pendingDeviceAdminPromise?.resolve(false)
+        pendingDeviceAdminPromise = null
         EventBridge.detachReactContext()
         moduleScope.cancel()
         super.invalidate()
@@ -241,10 +312,216 @@ class ScreenGuardModule(
         }
     }
 
+    // ---------------------------------------------------------------------
+    // Milestone 4: accountability, device administrator, managed-device state
+    // ---------------------------------------------------------------------
+
+    @ReactMethod
+    fun getAccountabilityStatus(promise: Promise) {
+        try {
+            val status = AccountabilityManager.getStatus(reactContext.applicationContext)
+            promise.resolve(EventBridge.accountabilityStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_ACCOUNTABILITY_STATUS", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun enableAccountability(configJson: String, promise: Promise) {
+        try {
+            val obj = JSONObject(configJson)
+            val config = AccountabilityConfig(
+                durationType = obj.optString("durationType", "ONE_DAY"),
+                customDays = obj.optInt("customDays", 1),
+                pin = obj.optString("pin", ""),
+                coolingOffMinutes = obj.optInt(
+                    "coolingOffMinutes",
+                    AccountabilityRules.DEFAULT_COOLING_OFF_MINUTES
+                )
+            )
+            val result = AccountabilityManager.enable(config, reactContext.applicationContext)
+            EventBridge.emitAccountabilityStatus(result.status)
+            promise.resolve(EventBridge.enableResultToWritableMap(result))
+        } catch (e: Exception) {
+            promise.reject("ERR_ACCOUNTABILITY_ENABLE", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun requestAccountabilityDeactivation(promise: Promise) {
+        try {
+            val status = AccountabilityManager.requestDeactivation(reactContext.applicationContext)
+            EventBridge.emitAccountabilityStatus(status)
+            promise.resolve(EventBridge.accountabilityStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_DEACTIVATION_REQUEST", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun cancelAccountabilityDeactivation(promise: Promise) {
+        try {
+            val status = AccountabilityManager.cancelDeactivation(reactContext.applicationContext)
+            EventBridge.emitAccountabilityStatus(status)
+            promise.resolve(EventBridge.accountabilityStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_DEACTIVATION_CANCEL", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun confirmAccountabilityDeactivation(secretInput: String, promise: Promise) {
+        try {
+            val status = AccountabilityManager.confirmDeactivation(
+                secretInput,
+                reactContext.applicationContext
+            )
+            EventBridge.emitAccountabilityStatus(status)
+            promise.resolve(EventBridge.accountabilityStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_DEACTIVATION_CONFIRM", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun setAccountabilityPin(pin: String, promise: Promise) {
+        try {
+            val status = AccountabilityManager.setPin(pin, reactContext.applicationContext)
+            EventBridge.emitAccountabilityStatus(status)
+            promise.resolve(EventBridge.accountabilityStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_ACCOUNTABILITY_PIN", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun isDeviceAdminActive(promise: Promise) {
+        try {
+            promise.resolve(DeviceAdminController.isAdminActive(reactContext.applicationContext))
+        } catch (e: Exception) {
+            promise.reject("ERR_ADMIN_STATUS", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun requestDeviceAdminActivation(promise: Promise) {
+        try {
+            val appCtx = reactContext.applicationContext
+            if (DeviceAdminController.isAdminActive(appCtx)) {
+                promise.resolve(true)
+                return
+            }
+            val intent = DeviceAdminController.buildActivationIntent(appCtx)
+            if (!DeviceAdminController.canResolve(intent, appCtx)) {
+                promise.reject(
+                    "ERR_ADMIN_ACTIVATION_UNAVAILABLE",
+                    "This device does not expose Android device administrator activation."
+                )
+                return
+            }
+            val activity = reactContext.currentActivity
+            if (activity == null) {
+                promise.reject(
+                    "ERR_NO_ACTIVITY",
+                    "Unable to open Device Admin screen because no active window is attached."
+                )
+                return
+            }
+            pendingDeviceAdminPromise?.resolve(false)
+            pendingDeviceAdminPromise = promise
+            activity.runOnUiThread {
+                try {
+                    // MUST use startActivityForResult without FLAG_ACTIVITY_NEW_TASK or Android's
+                    // DeviceAdminAdd immediately calls finish().
+                    activity.startActivityForResult(intent, REQUEST_CODE_DEVICE_ADMIN)
+                } catch (e: Exception) {
+                    val p = pendingDeviceAdminPromise
+                    pendingDeviceAdminPromise = null
+                    p?.reject("ERR_ADMIN_ACTIVATION", e.message, e)
+                }
+            }
+        } catch (e: Exception) {
+            pendingDeviceAdminPromise = null
+            promise.reject("ERR_ADMIN_ACTIVATION", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun openDeviceAdminSettings(promise: Promise) {
+        try {
+            val intent = DeviceAdminController.openSettingsIntent(reactContext.applicationContext)
+            reactContext.startActivity(intent)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_ADMIN_SETTINGS", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun requestDeviceAdminDeactivation(promise: Promise) {
+        try {
+            val appCtx = reactContext.applicationContext
+            if (!DeviceAdminController.isAdminActive(appCtx)) {
+                promise.resolve(false)
+                return
+            }
+            val intent = DeviceAdminController.buildDeactivationIntent(appCtx)
+            if (DeviceAdminController.canResolve(intent, appCtx)) {
+                reactContext.startActivity(intent)
+            } else {
+                reactContext.startActivity(DeviceAdminController.openSettingsIntent(appCtx))
+            }
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_ADMIN_DEACTIVATION", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun lockDeviceViaAdmin(promise: Promise) {
+        try {
+            promise.resolve(DeviceAdminController.lockNow(reactContext.applicationContext))
+        } catch (e: Exception) {
+            promise.reject("ERR_ADMIN_LOCK", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getManagedDeviceStatus(promise: Promise) {
+        try {
+            val state = DeviceAdminController.currentState(reactContext.applicationContext)
+            promise.resolve(Arguments.createMap().apply {
+                putBoolean("deviceOwnerActive", state.deviceOwnerActive)
+                putBoolean("profileOwnerActive", state.profileOwnerActive)
+                putBoolean("deviceAdminActive", state.deviceAdminActive)
+                putBoolean("managedUninstallPolicyActive", state.managedUninstallPolicyActive)
+                putString(
+                    "provisioningState",
+                    if (state.deviceOwnerActive) {
+                        "DEVICE_OWNER_ACTIVE"
+                    } else if (state.profileOwnerActive) {
+                        "PROFILE_OWNER_ACTIVE"
+                    } else {
+                        "NOT_ENROLLED"
+                    }
+                )
+            })
+        } catch (e: Exception) {
+            promise.reject("ERR_MANAGED_STATUS", e.message, e)
+        }
+    }
+
     @ReactMethod
     fun setProtectionEnabled(enabled: Boolean, promise: Promise) {
         try {
             val appCtx = reactContext.applicationContext
+            if (!enabled && AccountabilityManager.isLockActive(appCtx)) {
+                promise.reject(
+                    "ERR_PROTECTION_LOCKED",
+                    "Uninstall Protection is active. Unlock with your PIN in the Protect tab first."
+                )
+                return
+            }
             val updated = LocalStorage.setProtectionEnabled(appCtx, enabled)
             if (!enabled) {
                 ProtectionCoordinator.onProtectionPaused(appCtx)
@@ -299,7 +576,10 @@ class ScreenGuardModule(
     fun updatePreferences(prefsJson: String, promise: Promise) {
         try {
             val appCtx = reactContext.applicationContext
-            val updated = LocalStorage.updatePreferencesFromJson(appCtx, prefsJson)
+            var updated = LocalStorage.updatePreferencesFromJson(appCtx, prefsJson)
+            if (!updated.protectionEnabled && AccountabilityManager.isLockActive(appCtx)) {
+                updated = LocalStorage.setProtectionEnabled(appCtx, true)
+            }
             if (!updated.protectionEnabled) {
                 ProtectionCoordinator.onProtectionPaused(appCtx)
             }
@@ -342,6 +622,224 @@ class ScreenGuardModule(
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERR_CLEAR_LOGS", e.message, e)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Milestone 5: user-approved local DNS content filter
+    // ---------------------------------------------------------------------
+
+    private fun dnsStatus(): DnsFilterStatus =
+        DnsFilterState.status(reactContext.applicationContext)
+
+    @ReactMethod
+    fun getDnsFilterStatus(promise: Promise) {
+        try {
+            promise.resolve(EventBridge.dnsFilterStatusToWritableMap(dnsStatus()))
+        } catch (e: Exception) {
+            promise.reject("ERR_DNS_STATUS", e.message, e)
+        }
+    }
+
+    /**
+     * Opens Android's official VPN consent dialog via startActivityForResult (required so
+     * ConfirmDialog sees getCallingPackage()) and automatically starts the DNS filter
+     * immediately once approved. Resolves true if approved / already prepared, false if cancelled.
+     */
+    @ReactMethod
+    fun requestDnsFilterPermission(promise: Promise) {
+        try {
+            val context = reactContext.applicationContext
+            val intent = VpnService.prepare(context)
+            if (intent == null) {
+                DnsFilterState.saveConfig(
+                    context,
+                    DnsFilterState.loadConfig(context).copy(enabled = true),
+                )
+                DnsFilterVpnService.startIfPreparedAndEnabled(context)
+                EventBridge.emitDnsFilterStatus(dnsStatus())
+                promise.resolve(true)
+                return
+            }
+            val activity = reactContext.currentActivity
+            if (activity == null) {
+                promise.reject(
+                    "ERR_NO_ACTIVITY",
+                    "Unable to open Android VPN consent dialog because no active window is attached.",
+                )
+                return
+            }
+            pendingVpnPermissionPromise?.resolve(false)
+            pendingVpnPermissionPromise = promise
+            activity.runOnUiThread {
+                try {
+                    // MUST use startActivityForResult without FLAG_ACTIVITY_NEW_TASK so Android's
+                    // ConfirmDialog receives a valid calling package and displays the dialog.
+                    activity.startActivityForResult(intent, REQUEST_CODE_VPN_PERMISSION)
+                } catch (e: Exception) {
+                    val p = pendingVpnPermissionPromise
+                    pendingVpnPermissionPromise = null
+                    p?.reject("ERR_DNS_PERMISSION", e.message, e)
+                }
+            }
+        } catch (e: Exception) {
+            pendingVpnPermissionPromise = null
+            promise.reject("ERR_DNS_PERMISSION", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun startDnsFilter(promise: Promise) {
+        try {
+            val context = reactContext.applicationContext
+            if (VpnService.prepare(context) != null) {
+                promise.reject(
+                    "ERR_VPN_PERMISSION_REQUIRED",
+                    "Approve the Android VPN dialog before starting the DNS filter.",
+                )
+                return
+            }
+            DnsFilterState.saveConfig(
+                context,
+                DnsFilterState.loadConfig(context).copy(enabled = true),
+            )
+            val intent = Intent(context, DnsFilterVpnService::class.java).apply {
+                action = DnsFilterVpnService.ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+            DnsFilterState.mark("FILTER_START_REQUESTED")
+            // Do not claim ACTIVE until the VPN service confirms the tunnel is established.
+            val status = dnsStatus()
+            EventBridge.emitDnsFilterStatus(status)
+            promise.resolve(EventBridge.dnsFilterStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_DNS_START", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun stopDnsFilter(promise: Promise) {
+        try {
+            val context = reactContext.applicationContext
+            if (AccountabilityManager.isLockActive(context)) {
+                promise.reject(
+                    "ERR_PROTECTION_LOCKED",
+                    "Uninstall Protection is active. Unlock with your PIN in the Protect tab before stopping the DNS filter.",
+                )
+                return
+            }
+            DnsFilterState.saveConfig(
+                context,
+                DnsFilterState.loadConfig(context).copy(enabled = false),
+            )
+            val intent = Intent(context, DnsFilterVpnService::class.java).apply {
+                action = DnsFilterVpnService.ACTION_STOP
+            }
+            context.startService(intent)
+            DnsFilterState.serviceRunning = false
+            val status = dnsStatus().copy(active = false)
+            EventBridge.emitDnsFilterStatus(status)
+            promise.resolve(EventBridge.dnsFilterStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_DNS_STOP", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun updateDnsFilterConfig(configJson: String, promise: Promise) {
+        try {
+            val context = reactContext.applicationContext
+            val obj = JSONObject(configJson)
+            val current = DnsFilterState.loadConfig(context)
+            val domains = mutableListOf<String>()
+            val rawDomains = obj.optJSONArray("customDomains")
+            if (rawDomains != null) {
+                for (i in 0 until rawDomains.length()) {
+                    DnsFilterState.normalizeDomain(rawDomains.optString(i, ""))
+                        ?.let { domains.add(it) }
+                }
+            }
+            val profile = obj.optString("profile", current.profile)
+            val rawHost = obj.optString("customHost", current.customHost).trim()
+            val customHost = if (rawHost.isEmpty()) {
+                ""
+            } else {
+                DnsFilterState.normalizeHost(rawHost)
+                    ?: throw IllegalArgumentException(
+                        "Enter a DNS hostname or IPv4 address without a URL prefix, path, or port.",
+                    )
+            }
+            val next = DnsFilterConfig(
+                enabled = current.enabled,
+                profile = if (profile in DnsFilterProfiles.ALL) {
+                    profile
+                } else {
+                    DnsFilterProfiles.CLOUDFLARE_FAMILY
+                },
+                customHost = customHost,
+                customDomains = domains.distinct(),
+                useStarterList = obj.optBoolean("useStarterList", current.useStarterList),
+            )
+            DnsFilterState.saveConfig(context, next)
+            DnsFilterState.mark("CONFIG_UPDATED")
+            val status = dnsStatus()
+            EventBridge.emitDnsFilterStatus(status)
+            promise.resolve(EventBridge.dnsFilterStatusToWritableMap(status))
+        } catch (e: Exception) {
+            promise.reject("ERR_DNS_CONFIG", e.message, e)
+        }
+    }
+
+    /**
+     * Lists installed applications for the exclusion picker. Apps are returned with a
+     * readable label, package name, and system-app flag so the UI can offer a searchable
+     * list instead of making the user type package names. Screen Guard itself is omitted,
+     * and nothing is transmitted off-device.
+     */
+    @ReactMethod
+    fun getInstalledApps(promise: Promise) {
+        try {
+            val context = reactContext.applicationContext
+            val pm = context.packageManager
+            val selfPackage = context.packageName
+            val entries = mutableListOf<Triple<String, String, Boolean>>()
+            val installed = pm.getInstalledPackages(0)
+            for (pkgInfo in installed) {
+                val packageName = pkgInfo.packageName ?: continue
+                if (packageName == selfPackage) {
+                    continue
+                }
+                val appInfo = pkgInfo.applicationInfo ?: continue
+                val label = try {
+                    pm.getApplicationLabel(appInfo).toString()
+                } catch (_: Exception) {
+                    packageName
+                }
+                val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
+                    (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+                entries.add(Triple(packageName, label, isSystem))
+            }
+            // User apps first, then alphabetical by label (case-insensitive).
+            entries.sortWith(
+                compareBy<Triple<String, String, Boolean>> { it.third }
+                    .thenBy { it.second.lowercase() }
+                    .thenBy { it.first }
+            )
+            val result = Arguments.createArray()
+            entries.forEach { (packageName, label, isSystem) ->
+                result.pushMap(Arguments.createMap().apply {
+                    putString("packageName", packageName)
+                    putString("label", label)
+                    putBoolean("isSystem", isSystem)
+                })
+            }
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.reject("ERR_GET_INSTALLED_APPS", e.message, e)
         }
     }
 

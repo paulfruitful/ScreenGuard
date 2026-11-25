@@ -1,15 +1,22 @@
 import {useCallback, useEffect, useRef, useState} from 'react';
 import {AppState, AppStateStatus} from 'react-native';
 import {
+  DEFAULT_ACCOUNTABILITY_STATUS,
   DEFAULT_COMPATIBILITY_TARGETS,
+  DEFAULT_DNS_FILTER_STATUS,
   DEFAULT_PREFERENCES,
   DEFAULT_STATUS,
   ScreenGuardNative,
 } from '../services/ScreenGuardNative';
 import {
+  AccountabilityConfig,
+  AccountabilityStatus,
   ActivityLogEntry,
   AppCompatibilityRecord,
   DebounceTestResult,
+  DnsFilterConfigInput,
+  DnsFilterStatus,
+  InstalledApp,
   DebugPreviewResponse,
   EvalSampleMetadata,
   FullEvaluationReport,
@@ -21,6 +28,10 @@ import {
 
 export function useScreenGuard() {
   const [status, setStatus] = useState<MonitoringStatus>(DEFAULT_STATUS);
+  const [accountability, setAccountability] =
+    useState<AccountabilityStatus>(DEFAULT_ACCOUNTABILITY_STATUS);
+  const [dnsFilterStatus, setDnsFilterStatus] =
+    useState<DnsFilterStatus>(DEFAULT_DNS_FILTER_STATUS);
   const [preferences, setPreferences] =
     useState<UserPreferences>(DEFAULT_PREFERENCES);
   const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
@@ -43,6 +54,7 @@ export function useScreenGuard() {
   const [lastError, setLastError] = useState<string | null>(null);
 
   const isMountedRef = useRef<boolean>(true);
+  const dnsStartupAttemptedRef = useRef<boolean>(false);
 
   const refreshAll = useCallback(async () => {
     if (!ScreenGuardNative.isAvailable()) {
@@ -56,18 +68,24 @@ export function useScreenGuard() {
         latestLogs,
         latestCompat,
         samples,
+        latestAccountability,
+        latestDnsFilter,
       ] = await Promise.all([
         ScreenGuardNative.getMonitoringStatus(),
         ScreenGuardNative.getPreferences(),
         ScreenGuardNative.getActivityLogs(120),
         ScreenGuardNative.getCompatibilityRecords(),
         ScreenGuardNative.getEvaluationSamples(),
+        ScreenGuardNative.getAccountabilityStatus(),
+        ScreenGuardNative.getDnsFilterStatus(),
       ]);
 
       if (!isMountedRef.current) {
         return;
       }
       setStatus(latestStatus);
+      setAccountability(latestAccountability);
+      setDnsFilterStatus(latestDnsFilter);
       setPreferences(latestPrefs);
       setActivityLogs(latestLogs);
       if (Array.isArray(latestCompat) && latestCompat.length > 0) {
@@ -77,6 +95,33 @@ export function useScreenGuard() {
         setEvalSamples(samples);
       }
       setLastError(null);
+
+      // Activate local DNS filtering right from the start of the app:
+      // if VPN consent is not yet approved, prompt Android's official VPN consent dialog
+      // once on launch so approval immediately starts the filter.
+      if (!dnsStartupAttemptedRef.current && !latestDnsFilter.active) {
+        dnsStartupAttemptedRef.current = true;
+        if (!latestDnsFilter.prepared) {
+          setTimeout(() => {
+            if (!isMountedRef.current) {
+              return;
+            }
+            ScreenGuardNative.requestDnsFilterPermission()
+              .then(() => {
+                if (isMountedRef.current) {
+                  ScreenGuardNative.getDnsFilterStatus()
+                    .then(updated => {
+                      if (isMountedRef.current) {
+                        setDnsFilterStatus(updated);
+                      }
+                    })
+                    .catch(() => {});
+                }
+              })
+              .catch(() => {});
+          }, 450);
+        }
+      }
     } catch (err: unknown) {
       if (isMountedRef.current) {
         setLastError(
@@ -177,6 +222,15 @@ export function useScreenGuard() {
               protectionSummary: event.summary,
             }));
             refreshAll();
+            break;
+
+          case 'ACCOUNTABILITY_STATUS_CHANGED':
+            setAccountability(event.status);
+            refreshAll();
+            break;
+
+          case 'DNS_FILTER_STATUS_CHANGED':
+            setDnsFilterStatus(event.status);
             break;
         }
       },
@@ -407,6 +461,19 @@ export function useScreenGuard() {
     }
   }, [refreshAll]);
 
+  const getInstalledApps = useCallback(async (): Promise<InstalledApp[]> => {
+    try {
+      return await ScreenGuardNative.getInstalledApps();
+    } catch (err: unknown) {
+      if (isMountedRef.current) {
+        setLastError(
+          err instanceof Error ? err.message : 'Unable to load installed apps',
+        );
+      }
+      return [];
+    }
+  }, []);
+
   const recordCompatibilityResult = useCallback(
     async (record: AppCompatibilityRecord) => {
       try {
@@ -497,8 +564,210 @@ export function useScreenGuard() {
     [refreshAll],
   );
 
+  const applyAccountabilityResult = useCallback(
+    async (next: AccountabilityStatus | null) => {
+      if (next && isMountedRef.current) {
+        setAccountability(next);
+      }
+      await refreshAll();
+      return next;
+    },
+    [refreshAll],
+  );
+
+  const enableAccountability = useCallback(
+    async (config: AccountabilityConfig) => {
+      setLastError(null);
+      try {
+        const result = await ScreenGuardNative.enableAccountability(config);
+        await applyAccountabilityResult(result.status);
+        return result;
+      } catch (err: unknown) {
+        if (isMountedRef.current) {
+          setLastError(
+            err instanceof Error ? err.message : 'Unable to enable accountability',
+          );
+        }
+        return null;
+      }
+    },
+    [applyAccountabilityResult],
+  );
+
+  const requestAccountabilityDeactivation = useCallback(async () => {
+    try {
+      const next = await ScreenGuardNative.requestAccountabilityDeactivation();
+      return await applyAccountabilityResult(next);
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to request deactivation',
+      );
+      return null;
+    }
+  }, [applyAccountabilityResult]);
+
+  const cancelAccountabilityDeactivation = useCallback(async () => {
+    try {
+      const next = await ScreenGuardNative.cancelAccountabilityDeactivation();
+      return await applyAccountabilityResult(next);
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to cancel deactivation',
+      );
+      return null;
+    }
+  }, [applyAccountabilityResult]);
+
+  const confirmAccountabilityDeactivation = useCallback(
+    async (secretInput: string) => {
+      try {
+        const next =
+          await ScreenGuardNative.confirmAccountabilityDeactivation(secretInput);
+        return await applyAccountabilityResult(next);
+      } catch (err: unknown) {
+        setLastError(
+          err instanceof Error ? err.message : 'Unable to confirm deactivation',
+        );
+        return null;
+      }
+    },
+    [applyAccountabilityResult],
+  );
+
+  const setAccountabilityPin = useCallback(
+    async (pin: string) => {
+      try {
+        const next = await ScreenGuardNative.setAccountabilityPin(pin);
+        return await applyAccountabilityResult(next);
+      } catch (err: unknown) {
+        setLastError(
+          err instanceof Error ? err.message : 'Unable to update PIN',
+        );
+        return null;
+      }
+    },
+    [applyAccountabilityResult],
+  );
+
+  const activateDeviceAdmin = useCallback(async () => {
+    try {
+      const opened = await ScreenGuardNative.requestDeviceAdminActivation();
+      await refreshAll();
+      return opened;
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to open administrator activation',
+      );
+      return false;
+    }
+  }, [refreshAll]);
+
+  const openDeviceAdminSettings = useCallback(async () => {
+    try {
+      await ScreenGuardNative.openDeviceAdminSettings();
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to open administrator settings',
+      );
+    }
+  }, []);
+
+  const deactivateDeviceAdmin = useCallback(async () => {
+    try {
+      const opened = await ScreenGuardNative.requestDeviceAdminDeactivation();
+      await refreshAll();
+      return opened;
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to start administrator deactivation',
+      );
+      return false;
+    }
+  }, [refreshAll]);
+
+  const lockDeviceViaAdmin = useCallback(async () => {
+    try {
+      const locked = await ScreenGuardNative.lockDeviceViaAdmin();
+      if (!locked) {
+        setLastError('Activate Screen Guard device administrator before using lock now.');
+      }
+      return locked;
+    } catch (err: unknown) {
+      setLastError(err instanceof Error ? err.message : 'Unable to lock device');
+      return false;
+    }
+  }, []);
+
+  const applyDnsFilterResult = useCallback(
+    async (next: DnsFilterStatus | null) => {
+      if (next && isMountedRef.current) {
+        setDnsFilterStatus(next);
+      }
+      await refreshAll();
+      return next;
+    },
+    [refreshAll],
+  );
+
+  const requestDnsFilterPermission = useCallback(async () => {
+    setLastError(null);
+    try {
+      const approved = await ScreenGuardNative.requestDnsFilterPermission();
+      await refreshAll();
+      return approved;
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to open VPN consent screen',
+      );
+      return false;
+    }
+  }, [refreshAll]);
+
+  const startDnsFilter = useCallback(async () => {
+    setLastError(null);
+    try {
+      const next = await ScreenGuardNative.startDnsFilter();
+      return await applyDnsFilterResult(next);
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to start the DNS filter',
+      );
+      return null;
+    }
+  }, [applyDnsFilterResult]);
+
+  const stopDnsFilter = useCallback(async () => {
+    try {
+      const next = await ScreenGuardNative.stopDnsFilter();
+      return await applyDnsFilterResult(next);
+    } catch (err: unknown) {
+      setLastError(
+        err instanceof Error ? err.message : 'Unable to stop the DNS filter',
+      );
+      return null;
+    }
+  }, [applyDnsFilterResult]);
+
+  const updateDnsFilterConfig = useCallback(
+    async (config: DnsFilterConfigInput) => {
+      setLastError(null);
+      try {
+        const next = await ScreenGuardNative.updateDnsFilterConfig(config);
+        return await applyDnsFilterResult(next);
+      } catch (err: unknown) {
+        setLastError(
+          err instanceof Error ? err.message : 'Unable to save DNS filter settings',
+        );
+        return null;
+      }
+    },
+    [applyDnsFilterResult],
+  );
+
   return {
     status,
+    accountability,
+    dnsFilterStatus,
     preferences,
     activityLogs,
     compatibilityRecords,
@@ -523,9 +792,23 @@ export function useScreenGuard() {
     purgeInMemoryPreview,
     runDebounceTest,
     runDisconnectionTest,
+    getInstalledApps,
     recordCompatibilityResult,
     initializeLiteRtModel,
     runSingleSampleClassification,
     runFullEvaluationBenchmark,
+    enableAccountability,
+    requestAccountabilityDeactivation,
+    cancelAccountabilityDeactivation,
+    confirmAccountabilityDeactivation,
+    setAccountabilityPin,
+    activateDeviceAdmin,
+    openDeviceAdminSettings,
+    deactivateDeviceAdmin,
+    lockDeviceViaAdmin,
+    requestDnsFilterPermission,
+    startDnsFilter,
+    stopDnsFilter,
+    updateDnsFilterConfig,
   };
 }

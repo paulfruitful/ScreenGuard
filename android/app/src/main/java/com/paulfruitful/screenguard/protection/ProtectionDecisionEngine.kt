@@ -29,6 +29,13 @@ class ProtectionDecisionEngine {
 
     companion object {
         private const val EWMA_ALPHA = 0.62f
+        /**
+         * Broad SUGGESTIVE/SEXY predictions require 2 consecutive frames (unless confidence is
+         * very high >= 0.88f) to eliminate single-frame false alarms on gym/sports/scroll frames,
+         * while EXPLICIT, NUDITY, and SEXUAL_ACTIVITY remain immediate 1-frame triggers.
+         */
+        private const val SUGGESTIVE_CONFIRMATION_FRAMES = 2
+        private const val SUGGESTIVE_INSTANT_OVERRIDE_CONFIDENCE = 0.88f
     }
 
     fun getCurrentState(): OverlayState = synchronized(lock) { currentOverlayState }
@@ -197,9 +204,20 @@ class ProtectionDecisionEngine {
             consecutiveSafeFrames = 0
             activeTriggerCategory = result.predictedCategory
 
-            val requiredFrames = policy.confirmationFramesRequired.coerceAtLeast(1)
-            val confirmed = consecutivePositiveFrames >= requiredFrames ||
-                catEval.effectiveScore >= catEval.thresholdUsed
+            val isSuggestiveOnly = result.predictedCategory == ContentCategory.SUGGESTIVE.name
+            val requiredFrames = if (isSuggestiveOnly) {
+                maxOf(SUGGESTIVE_CONFIRMATION_FRAMES, policy.confirmationFramesRequired)
+            } else {
+                policy.confirmationFramesRequired.coerceAtLeast(1)
+            }
+            val confirmed = if (isSuggestiveOnly) {
+                consecutivePositiveFrames >= requiredFrames ||
+                    catEval.effectiveScore >= SUGGESTIVE_INSTANT_OVERRIDE_CONFIDENCE
+            } else {
+                // EXPLICIT / NUDITY / SEXUAL_ACTIVITY stay immediate 1-frame triggers when above threshold.
+                consecutivePositiveFrames >= requiredFrames ||
+                    catEval.effectiveScore >= catEval.thresholdUsed
+            }
 
             return if (confirmed || isCurrentlyShowingOverlay) {
                 if (!isCurrentlyShowingOverlay) {

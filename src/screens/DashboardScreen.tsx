@@ -17,9 +17,12 @@ import {
   ShieldCheckIcon,
 } from '../components/AppIcons';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
+import {UninstallProtectionSummaryCard} from '../components/UninstallProtectionSummaryCard';
 import {colors, radius, spacing} from '../theme/theme';
 import {
+  AccountabilityStatus,
   ActivityLogEntry,
+  DnsFilterStatus,
   MonitoringStatus,
   UserPreferences,
 } from '../types/screenguard';
@@ -27,23 +30,31 @@ import {ScreenGuardNative} from '../services/ScreenGuardNative';
 
 interface DashboardScreenProps {
   status: MonitoringStatus;
+  accountability: AccountabilityStatus;
+  dnsFilterStatus: DnsFilterStatus;
   preferences: UserPreferences;
   activityLogs: ActivityLogEntry[];
   onOpenAccessibilitySettings: () => void;
   onToggleProtection: (enabled: boolean) => void;
+  onEnableDnsFilter: () => void;
   onNavigateToActivity: () => void;
   onNavigateToSettings: () => void;
+  onNavigateToProtection: () => void;
   onRefresh: () => void;
 }
 
 export function DashboardScreen({
   status,
+  accountability,
+  dnsFilterStatus,
   preferences,
   activityLogs,
   onOpenAccessibilitySettings,
   onToggleProtection,
+  onEnableDnsFilter,
   onNavigateToActivity,
   onNavigateToSettings,
+  onNavigateToProtection,
   onRefresh,
 }: DashboardScreenProps) {
   const permissionGranted = status.accessibilityPermissionGranted;
@@ -105,6 +116,10 @@ export function DashboardScreen({
   const handlePrimaryAction = () => {
     if (!permissionGranted || serviceStoppedBySystem) {
       onOpenAccessibilitySettings();
+      return;
+    }
+    if (monitoringActive && accountability.active) {
+      onNavigateToProtection();
       return;
     }
     onToggleProtection(!status.protectionEnabled);
@@ -211,11 +226,36 @@ export function DashboardScreen({
               ? 'Enable Protection'
               : serviceStoppedBySystem
               ? 'Fix in Accessibility Settings'
+              : monitoringActive && accountability.active
+              ? 'Protection Locked'
               : monitoringActive
               ? 'Pause Protection'
               : 'Resume Protection'}
           </Text>
         </Pressable>
+
+        {!dnsFilterStatus.active && (
+          <Pressable
+            onPress={onEnableDnsFilter}
+            style={[
+              styles.goldButton,
+              {
+                marginTop: spacing.sm,
+                backgroundColor: 'rgba(255,255,255,0.18)',
+                paddingVertical: 11,
+              },
+            ]}>
+            <Text
+              style={[
+                styles.goldButtonText,
+                {color: '#FFFFFF', fontSize: 13.5},
+              ]}>
+              {dnsFilterStatus.prepared
+                ? 'Start DNS Content Filter'
+                : 'Enable DNS Content Filter (Approve VPN)'}
+            </Text>
+          </Pressable>
+        )}
 
         {!batteryOptIgnored && (
           <Pressable
@@ -303,6 +343,12 @@ export function DashboardScreen({
           </View>
         )}
       </View>
+
+      {/* Milestone 4: Uninstall Protection / accountability section */}
+      <UninstallProtectionSummaryCard
+        status={accountability}
+        onOpenProtection={onNavigateToProtection}
+      />
 
       {/* Strict Mode Footer */}
       <View style={styles.modeFooter}>

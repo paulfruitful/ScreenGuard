@@ -5,53 +5,39 @@ import {
   StyleSheet,
   Switch,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
-import {colors, radius, spacing, typography} from '../theme/theme';
+import {colors, radius, spacing} from '../theme/theme';
 import {UserPreferences} from '../types/screenguard';
 import {getFriendlyAppName} from '../utils/friendlyFormat';
 
 interface SettingsScreenProps {
   preferences: UserPreferences;
+  protectionLocked: boolean;
   onUpdatePreferences: (partial: Partial<UserPreferences>) => Promise<void>;
   onToggleProtection: (enabled: boolean) => void;
   onOpenAccessibilitySettings: () => void;
   onOpenOverlaySettings: () => void;
+  onNavigateToProtection: () => void;
+  onNavigateToExcludedApps: () => void;
+  onNavigateToDnsFilter: () => void;
+  dnsFilterActive: boolean;
 }
-
-const QUICK_EXCLUDE_CANDIDATES = [
-  {pkg: 'com.whatsapp', name: 'WhatsApp'},
-  {pkg: 'com.google.android.apps.messaging', name: 'Messages'},
-  {pkg: 'com.google.android.gm', name: 'Gmail'},
-  {pkg: 'com.android.settings', name: 'Settings'},
-];
 
 export function SettingsScreen({
   preferences,
+  protectionLocked,
   onUpdatePreferences,
   onToggleProtection,
   onOpenAccessibilitySettings,
   onOpenOverlaySettings,
+  onNavigateToProtection,
+  onNavigateToExcludedApps,
+  onNavigateToDnsFilter,
+  dnsFilterActive,
 }: SettingsScreenProps) {
-  const [customPackage, setCustomPackage] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const addExcludedPackage = (pkg: string) => {
-    const trimmed = pkg.trim().toLowerCase();
-    if (!trimmed) {
-      return;
-    }
-    if (preferences.excludedPackages.includes(trimmed)) {
-      setCustomPackage('');
-      return;
-    }
-    onUpdatePreferences({
-      excludedPackages: [...preferences.excludedPackages, trimmed],
-    });
-    setCustomPackage('');
-  };
 
   const removeExcludedPackage = (pkg: string) => {
     onUpdatePreferences({
@@ -86,12 +72,14 @@ export function SettingsScreen({
             <View style={styles.switchTextCol}>
               <Text style={styles.rowTitle}>Screen Guard Protection</Text>
               <Text style={styles.rowSubtitle}>
-                Automatically hide explicit and inappropriate content across all
-                your apps in Strict mode.
+                {protectionLocked
+                  ? 'Locked by Uninstall Protection. Unlock with your PIN in the Protect tab to change.'
+                  : 'Automatically hide explicit and inappropriate content across all your apps in Strict mode.'}
               </Text>
             </View>
             <Switch
               value={preferences.protectionEnabled}
+              disabled={protectionLocked && preferences.protectionEnabled}
               onValueChange={val => onToggleProtection(val)}
               trackColor={{false: colors.borderStrong, true: colors.royalBlue}}
               thumbColor="#FFFFFF"
@@ -99,64 +87,82 @@ export function SettingsScreen({
           </View>
         </View>
 
+        {/* Uninstall Protection */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Uninstall Protection</Text>
+          <Text style={styles.cardSub}>
+            Lock pausing, DNS stop, and quick uninstallation with a PIN and
+            Android Device Admin so you stay protected against relapse.
+          </Text>
+          <Pressable onPress={onNavigateToProtection} style={styles.outlineBtn}>
+            <Text style={styles.outlineBtnText}>
+              {protectionLocked
+                ? 'Manage Uninstall Protection (Locked)'
+                : 'Enable Uninstall Protection'}
+            </Text>
+          </Pressable>
+        </View>
+
         {/* 2. Trusted / Excluded Apps */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Trusted Apps (Excluded)</Text>
           <Text style={styles.cardSub}>
-            Screen Guard will never check or cover apps you add here.
+            Screen Guard will never check or cover apps you exclude. Pick from a
+            searchable list of your installed apps — no package names to type.
           </Text>
 
-          <View style={styles.chipWrap}>
-            {preferences.excludedPackages.map(pkg => (
-              <View key={pkg} style={styles.pkgChip}>
-                <Text style={styles.pkgChipText}>
-                  {getFriendlyAppName(pkg)}
-                </Text>
-                <Pressable
-                  onPress={() => removeExcludedPackage(pkg)}
-                  hitSlop={8}>
-                  <Text style={styles.pkgChipRemove}>✕</Text>
-                </Pressable>
-              </View>
-            ))}
-          </View>
+          <Pressable
+            onPress={onNavigateToExcludedApps}
+            style={styles.pickAppsButton}>
+            <Text style={styles.pickAppsButtonText}>
+              Choose apps to exclude
+              {preferences.excludedPackages.length > 0
+                ? ` · ${preferences.excludedPackages.length} selected`
+                : ''}
+            </Text>
+            <Text style={styles.pickAppsArrow}>›</Text>
+          </Pressable>
 
-          <Text style={[styles.fieldLabel, {marginTop: spacing.md}]}>
-            Quick Add
-          </Text>
-          <View style={styles.chipWrap}>
-            {QUICK_EXCLUDE_CANDIDATES.map(item => {
-              const already = preferences.excludedPackages.includes(item.pkg);
-              return (
-                <Pressable
-                  key={item.pkg}
-                  disabled={already}
-                  onPress={() => addExcludedPackage(item.pkg)}
-                  style={[styles.quickChip, already && {opacity: 0.45}]}>
-                  <Text style={styles.quickChipText}>
-                    {already ? `✓ ${item.name}` : `+ ${item.name}`}
+          {preferences.excludedPackages.length > 0 ? (
+            <View style={styles.chipWrap}>
+              {preferences.excludedPackages.map(pkg => (
+                <View key={pkg} style={styles.pkgChip}>
+                  <Text style={styles.pkgChipText}>
+                    {getFriendlyAppName(pkg)}
                   </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+                  <Pressable
+                    onPress={() => removeExcludedPackage(pkg)}
+                    hitSlop={8}>
+                    <Text style={styles.pkgChipRemove}>✕</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyHint}>No apps excluded yet.</Text>
+          )}
+        </View>
 
-          <View style={[styles.inputRow, {marginTop: spacing.md}]}>
-            <TextInput
-              value={customPackage}
-              onChangeText={setCustomPackage}
-              placeholder="Add app package (e.g. com.whatsapp)"
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={styles.textInput}
-            />
-            <Pressable
-              onPress={() => addExcludedPackage(customPackage)}
-              style={styles.addBtn}>
-              <Text style={styles.addBtnText}>Add</Text>
-            </Pressable>
+        {/* DNS content filter (Milestone 5) */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>DNS Content Filter</Text>
+          <Text style={styles.cardSub}>
+            Block explicit sites with a family-safe DNS resolver plus your own domain list.
+            Requires Android VPN approval; only DNS is routed, never your other traffic.
+          </Text>
+          <View style={styles.dnsStatusRow}>
+            <Text style={styles.dnsStatusLabel}>Filter status</Text>
+            <Text
+              style={[
+                styles.dnsStatusValue,
+                dnsFilterActive ? styles.dnsActive : styles.dnsOff,
+              ]}>
+              {dnsFilterActive ? 'ACTIVE' : 'OFF'}
+            </Text>
           </View>
+          <Pressable onPress={onNavigateToDnsFilter} style={styles.outlineBtn}>
+            <Text style={styles.outlineBtnText}>Open DNS Filter</Text>
+          </Pressable>
         </View>
 
         {/* 4. Permissions & Privacy Promise */}
@@ -311,11 +317,27 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.border,
   },
-  fieldLabel: {
-    fontSize: 12.5,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginBottom: spacing.sm,
+  pickAppsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.royalBlue,
+    borderRadius: radius.pill,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 13,
+    marginBottom: spacing.md,
+  },
+  pickAppsButtonText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+  },
+  pickAppsArrow: {color: '#FFFFFF', fontSize: 20, fontWeight: '700'},
+  emptyHint: {
+    fontSize: 12,
+    color: colors.textMuted,
+    fontStyle: 'italic',
   },
   pillRow: {
     flexDirection: 'row',
@@ -413,47 +435,16 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontWeight: '700',
   },
-  quickChip: {
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  quickChipText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.royalBlue,
-  },
-  inputRow: {
+  dnsStatusRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: colors.surfaceSubtle,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 9,
-    color: colors.textPrimary,
-    fontSize: 12.5,
-    fontFamily: typography.mono,
-  },
-  addBtn: {
-    backgroundColor: colors.royalBlue,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: spacing.md,
   },
-  addBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
+  dnsStatusLabel: {fontSize: 12.5, color: colors.textSecondary},
+  dnsStatusValue: {fontSize: 11, fontWeight: '800', letterSpacing: 1},
+  dnsActive: {color: colors.success},
+  dnsOff: {color: colors.textMuted},
   outlineBtn: {
     backgroundColor: colors.surfaceSubtle,
     borderRadius: radius.pill,

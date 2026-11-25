@@ -38,6 +38,7 @@ object CaptionAndOcrAnalyzer {
             hardcoreKeywordScore = if (signal.isExplicitPornDomain) 0.96f else signal.hardcoreScore,
             contextualAdultScore = signal.adultScore,
             benignDialogueOrEducationalContext = signal.isBenignEducationalOrDialogue,
+            benignNonSexualVisualContext = signal.isBenignNonSexualVisualContext,
             matchedCategoryCount = signal.matchedIndicators.size,
             durationMs = signal.scanDurationMs
         )

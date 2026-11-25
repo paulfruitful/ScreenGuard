@@ -38,7 +38,8 @@ object MultimodalFusionEngine {
         val corroborating = mutableListOf<String>()
 
         // 1. Explicit Porn Domain in Browser URL Bar (e.g., pornhub.com, xvideos.com, xnxx.com)
-        if (c.available && c.explicitPornDomainDetected && !c.benignDialogueOrEducationalContext) {
+        // Explicit porn domains are NEVER vetoed by benign words on the page.
+        if (c.available && c.explicitPornDomainDetected) {
             corroborating.add("CAPTION_URL_DOMAIN")
             if (v.available && v.pornScore >= 0.15f) corroborating.add("VISUAL")
             val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
@@ -51,6 +52,38 @@ object MultimodalFusionEngine {
                 uncertaintyPreserved = false,
                 dialogueOnlySuppressed = false,
                 fusionExplanation = "Explicit adult domain detected in browser URL bar",
+                decisionDurationMs = dur
+            )
+        }
+
+        // 1b. Benign Non-Sexual Visual Context Veto (e.g., gym, MMA/UFC, swimming, medical, skincare):
+        // ONLY dampens borderline SUGGESTIVE / UNCERTAIN frames when explicit porn/hentai/stage2
+        // signals are genuinely low and no hardcore text is present. NEVER overrides EXPLICIT,
+        // NUDITY, SEXUAL_ACTIVITY, or high-confidence porn/hentai detections.
+        val isBorderlineSuggestiveOrUncertain =
+            v.predictedCategory == ContentCategory.SUGGESTIVE.name ||
+                v.predictedCategory == ContentCategory.UNCERTAIN.name
+        val hasLowExplicitSignal =
+            v.pornScore < 0.25f &&
+                v.hentaiScore < 0.25f &&
+                v.maxRoiPornScore < 0.30f &&
+                (!v.stage2Triggered || v.stage2NsfwScore < 0.55f)
+        val hasBenignContext =
+            c.available &&
+                (c.benignNonSexualVisualContext || c.benignDialogueOrEducationalContext) &&
+                c.hardcoreKeywordScore < 0.35f
+
+        if (isBorderlineSuggestiveOrUncertain && hasLowExplicitSignal && hasBenignContext) {
+            val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
+            return FusedMultimodalDecision(
+                finalCategory = ContentCategory.NON_EXPLICIT.name,
+                finalConfidence = maxOf(v.neutralScore + v.drawingsScore, 0.80f).coerceIn(0f, 1f),
+                shouldIntervene = false,
+                primaryModality = "VISUAL",
+                corroboratingModalities = listOf("BENIGN_CONTEXT_VETO"),
+                uncertaintyPreserved = false,
+                dialogueOnlySuppressed = true,
+                fusionExplanation = "Benign non-sexual context veto applied to borderline ${v.predictedCategory} frame (porn=${"%.2f".format(v.pornScore)}, sexy=${"%.2f".format(v.sexyScore)})",
                 decisionDurationMs = dur
             )
         }

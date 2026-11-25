@@ -21,6 +21,7 @@ import com.paulfruitful.screenguard.classifier.ClassificationResult
 import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
 import com.paulfruitful.screenguard.classifier.ContentCategory
 import com.paulfruitful.screenguard.classifier.DetectionEngine
+import com.paulfruitful.screenguard.dns.DnsFilterVpnService
 import com.paulfruitful.screenguard.multimodal.AudioPlaybackCapturePrototype
 import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
 import com.paulfruitful.screenguard.multimodal.FusedMultimodalDecision
@@ -234,6 +235,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             active = prefs.protectionEnabled,
             currentPackage = currentForegroundPackage
         )
+        DnsFilterVpnService.startIfPreparedAndEnabled(applicationContext)
 
         EventBridge.emitServiceStatus(
             enabled = true,

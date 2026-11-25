@@ -64,6 +64,7 @@ data class CaptionNodeEvidence(
     val hardcoreKeywordScore: Float = 0f,
     val contextualAdultScore: Float = 0f,
     val benignDialogueOrEducationalContext: Boolean = false,
+    val benignNonSexualVisualContext: Boolean = false,
     val matchedCategoryCount: Int = 0,
     val durationMs: Long = 0L
 )

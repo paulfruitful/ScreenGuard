@@ -5,12 +5,19 @@ import {
   EmitterSubscription,
 } from 'react-native';
 import {
+  AccountabilityConfig,
+  AccountabilityStatus,
   ActivityLogEntry,
   AppCompatibilityRecord,
   DebounceTestResult,
   DebugPreviewResponse,
+  DnsFilterConfigInput,
+  DnsFilterStatus,
+  EnableAccountabilityResult,
   EvalSampleMetadata,
   FullEvaluationReport,
+  InstalledApp,
+  ManagedDeviceStatus,
   MonitoringStatus,
   ProtectionActivitySummary,
   ScreenGuardEvent,
@@ -38,6 +45,7 @@ interface ScreenGuardNativeModuleSpec {
   updatePreferences(prefsJson: string): Promise<UserPreferences>;
   getActivityLogs(limit: number): Promise<ActivityLogEntry[]>;
   clearActivityLogs(): Promise<boolean>;
+  getInstalledApps(): Promise<InstalledApp[]>;
   getCompatibilityRecords(): Promise<AppCompatibilityRecord[]>;
   updateCompatibilityRecord(recordJson: string): Promise<AppCompatibilityRecord[]>;
   triggerManualScreenshot(
@@ -57,6 +65,25 @@ interface ScreenGuardNativeModuleSpec {
   runFullModelEvaluation(
     includeDelegateBenchmark: boolean,
   ): Promise<FullEvaluationReport>;
+  getAccountabilityStatus(): Promise<AccountabilityStatus>;
+  enableAccountability(configJson: string): Promise<EnableAccountabilityResult>;
+  requestAccountabilityDeactivation(): Promise<AccountabilityStatus>;
+  cancelAccountabilityDeactivation(): Promise<AccountabilityStatus>;
+  confirmAccountabilityDeactivation(
+    secretInput: string,
+  ): Promise<AccountabilityStatus>;
+  setAccountabilityPin(pin: string): Promise<AccountabilityStatus>;
+  isDeviceAdminActive(): Promise<boolean>;
+  requestDeviceAdminActivation(): Promise<boolean>;
+  openDeviceAdminSettings(): Promise<boolean>;
+  requestDeviceAdminDeactivation(): Promise<boolean>;
+  lockDeviceViaAdmin(): Promise<boolean>;
+  getManagedDeviceStatus(): Promise<ManagedDeviceStatus>;
+  getDnsFilterStatus(): Promise<DnsFilterStatus>;
+  requestDnsFilterPermission(): Promise<boolean>;
+  startDnsFilter(): Promise<DnsFilterStatus>;
+  stopDnsFilter(): Promise<DnsFilterStatus>;
+  updateDnsFilterConfig(configJson: string): Promise<DnsFilterStatus>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 }
@@ -183,6 +210,56 @@ export const DEFAULT_STATUS: MonitoringStatus = {
   },
 };
 
+export const DEFAULT_ACCOUNTABILITY_STATUS: AccountabilityStatus = {
+  active: false,
+  mode: 'OFF',
+  durationType: 'NONE',
+  commitmentDays: 0,
+  commitmentDurationMs: 0,
+  startedAtMs: 0,
+  endsAtMs: 0,
+  remainingMs: 0,
+  expired: false,
+  pinConfigured: false,
+  coolingOffMinutes: 10,
+  deactivationRequested: false,
+  deactivationEligibleAtMs: 0,
+  coolingOffRemainingMs: 0,
+  recoveryCodeHint: '',
+  clockTrusted: true,
+  clockRollbackDetected: false,
+  timingNote: 'No active commitment.',
+  deviceAdminActive: false,
+  deviceAdminComponent: '',
+  deviceOwnerActive: false,
+  profileOwnerActive: false,
+  managedUninstallPolicyActive: false,
+  technicalEnforcement: 'NONE',
+  uninstallEnforcementActive: false,
+  enforcementSummary:
+    'No Android enforcement is active. Uninstall Protection is an accountability commitment only; Android Settings and uninstall remain fully available.',
+  lastEvent: 'NONE',
+  lastEventTimestampMs: 0,
+};
+
+export const DEFAULT_DNS_FILTER_STATUS: DnsFilterStatus = {
+  active: false,
+  prepared: false,
+  profile: 'CLOUDFLARE_FAMILY',
+  profileLabel: 'Cloudflare Family (1.1.1.3)',
+  upstream: '1.1.1.3',
+  customDomains: [],
+  customDomainCount: 0,
+  useStarterList: true,
+  blockedQueries: 0,
+  allowedQueries: 0,
+  failedQueries: 0,
+  lastEvent: 'NONE',
+  lastEventTimestampMs: 0,
+  note:
+    'Local DNS filter only: DNS queries go through this app, all other app traffic uses the normal connection. Apps using their own encrypted DNS or hardcoded IPs, or Android Private DNS, can bypass it.',
+};
+
 export const DEFAULT_COMPATIBILITY_TARGETS: AppCompatibilityRecord[] = [
   {
     packageName: 'com.android.settings',
@@ -291,6 +368,19 @@ function ensureNativeModule(): ScreenGuardNativeModuleSpec {
   return RawModule;
 }
 
+function normalizeDnsStatus(raw: DnsFilterStatus): DnsFilterStatus {
+  const domains = Array.isArray(raw?.customDomains) ? raw.customDomains : [];
+  return {
+    ...DEFAULT_DNS_FILTER_STATUS,
+    ...raw,
+    customDomains: domains,
+    customDomainCount:
+      typeof raw?.customDomainCount === 'number'
+        ? raw.customDomainCount
+        : domains.length,
+  };
+}
+
 export const ScreenGuardNative = {
   isAvailable(): boolean {
     return Boolean(RawModule);
@@ -372,6 +462,12 @@ export const ScreenGuardNative = {
     return mod.clearActivityLogs();
   },
 
+  async getInstalledApps(): Promise<InstalledApp[]> {
+    const mod = ensureNativeModule();
+    const apps = await mod.getInstalledApps();
+    return Array.isArray(apps) ? apps : [];
+  },
+
   async getCompatibilityRecords(): Promise<AppCompatibilityRecord[]> {
     const mod = ensureNativeModule();
     return mod.getCompatibilityRecords();
@@ -437,6 +533,97 @@ export const ScreenGuardNative = {
   ): Promise<FullEvaluationReport> {
     const mod = ensureNativeModule();
     return mod.runFullModelEvaluation(includeDelegateBenchmark);
+  },
+
+  async getAccountabilityStatus(): Promise<AccountabilityStatus> {
+    const mod = ensureNativeModule();
+    return mod.getAccountabilityStatus();
+  },
+
+  async enableAccountability(
+    config: AccountabilityConfig,
+  ): Promise<EnableAccountabilityResult> {
+    const mod = ensureNativeModule();
+    return mod.enableAccountability(JSON.stringify(config));
+  },
+
+  async requestAccountabilityDeactivation(): Promise<AccountabilityStatus> {
+    const mod = ensureNativeModule();
+    return mod.requestAccountabilityDeactivation();
+  },
+
+  async cancelAccountabilityDeactivation(): Promise<AccountabilityStatus> {
+    const mod = ensureNativeModule();
+    return mod.cancelAccountabilityDeactivation();
+  },
+
+  async confirmAccountabilityDeactivation(
+    secretInput: string,
+  ): Promise<AccountabilityStatus> {
+    const mod = ensureNativeModule();
+    return mod.confirmAccountabilityDeactivation(secretInput);
+  },
+
+  async setAccountabilityPin(pin: string): Promise<AccountabilityStatus> {
+    const mod = ensureNativeModule();
+    return mod.setAccountabilityPin(pin);
+  },
+
+  async isDeviceAdminActive(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.isDeviceAdminActive();
+  },
+
+  async requestDeviceAdminActivation(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.requestDeviceAdminActivation();
+  },
+
+  async openDeviceAdminSettings(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.openDeviceAdminSettings();
+  },
+
+  async requestDeviceAdminDeactivation(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.requestDeviceAdminDeactivation();
+  },
+
+  async lockDeviceViaAdmin(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.lockDeviceViaAdmin();
+  },
+
+  async getManagedDeviceStatus(): Promise<ManagedDeviceStatus> {
+    const mod = ensureNativeModule();
+    return mod.getManagedDeviceStatus();
+  },
+
+  async getDnsFilterStatus(): Promise<DnsFilterStatus> {
+    const mod = ensureNativeModule();
+    return normalizeDnsStatus(await mod.getDnsFilterStatus());
+  },
+
+  async requestDnsFilterPermission(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.requestDnsFilterPermission();
+  },
+
+  async startDnsFilter(): Promise<DnsFilterStatus> {
+    const mod = ensureNativeModule();
+    return normalizeDnsStatus(await mod.startDnsFilter());
+  },
+
+  async stopDnsFilter(): Promise<DnsFilterStatus> {
+    const mod = ensureNativeModule();
+    return normalizeDnsStatus(await mod.stopDnsFilter());
+  },
+
+  async updateDnsFilterConfig(
+    config: DnsFilterConfigInput,
+  ): Promise<DnsFilterStatus> {
+    const mod = ensureNativeModule();
+    return normalizeDnsStatus(await mod.updateDnsFilterConfig(JSON.stringify(config)));
   },
 
   subscribeToEvents(listener: (event: ScreenGuardEvent) => void): () => void {

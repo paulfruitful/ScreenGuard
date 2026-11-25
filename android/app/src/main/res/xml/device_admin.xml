@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Only the supported force-lock capability is requested. Deliberately absent:
+    any policy that would try to hide management, block Settings, or interfere with
+    emergency calling, recovery, or factory reset.
+-->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <force-lock />
+    </uses-policies>
+</device-admin>

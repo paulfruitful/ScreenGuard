@@ -13,6 +13,7 @@ data class ScreenTextSignal(
     val isExplicitPornDomain: Boolean = false,
     val fromSubtitleNode: Boolean = false,
     val isBenignEducationalOrDialogue: Boolean = false,
+    val isBenignNonSexualVisualContext: Boolean = false,
     val matchedIndicators: List<String> = emptyList(),
     val scanDurationMs: Long = 0L
 )
@@ -125,6 +126,50 @@ object ScreenTextContextAnalyzer {
         "dermatology"
     )
 
+    /**
+     * Non-sexual visual contexts that frequently produce borderline SUGGESTIVE/SEXY scores
+     * (gym/fitness, combat sports, swimming, medical/skincare, parenting). Used ONLY to veto
+     * borderline SUGGESTIVE frames when explicit porn/nudity scores are low — never overrides
+     * high-confidence EXPLICIT/NUDITY/PORN detections.
+     */
+    private val BENIGN_NON_SEXUAL_VISUAL_CONTEXT_TERMS = listOf(
+        "ufc",
+        "mma",
+        "boxing",
+        "wrestling",
+        "jiu-jitsu",
+        "bjj",
+        "muay thai",
+        "kickboxing",
+        "workout",
+        "gym",
+        "fitness",
+        "bodybuilding",
+        "crossfit",
+        "calisthenics",
+        "deadlift",
+        "bench press",
+        "physique",
+        "athlete",
+        "swimming",
+        "olympics",
+        "triathlon",
+        "marathon",
+        "beach volleyball",
+        "surfing",
+        "yoga",
+        "pilates",
+        "skincare",
+        "first aid",
+        "physical therapy",
+        "physiotherapy",
+        "chiropractic",
+        "postpartum",
+        "newborn",
+        "baby bath",
+        "toddler"
+    )
+
     @Volatile
     private var latestSignal: ScreenTextSignal = ScreenTextSignal()
 
@@ -189,7 +234,7 @@ object ScreenTextContextAnalyzer {
         return latestSignal
     }
 
-    private fun scoreText(
+    internal fun scoreText(
         combinedLower: String,
         subtitleNodeFound: Boolean,
         durMs: Long
@@ -202,11 +247,22 @@ object ScreenTextContextAnalyzer {
         var hardcoreScore = 0f
         var adultScore = 0f
         var isBenignEducational = false
+        var isBenignVisualContext = false
 
         for (benign in BENIGN_EDUCATIONAL_OR_DIALOGUE_TERMS) {
             if (combinedLower.contains(benign)) {
                 isBenignEducational = true
+                isBenignVisualContext = true
                 break
+            }
+        }
+
+        if (!isBenignVisualContext) {
+            for (term in BENIGN_NON_SEXUAL_VISUAL_CONTEXT_TERMS) {
+                if (containsWordOrSubstring(combinedLower, term)) {
+                    isBenignVisualContext = true
+                    break
+                }
             }
         }
 
@@ -253,6 +309,7 @@ object ScreenTextContextAnalyzer {
             isExplicitPornDomain = isPornDomain,
             fromSubtitleNode = subtitleNodeFound,
             isBenignEducationalOrDialogue = isBenignEducational,
+            isBenignNonSexualVisualContext = isBenignVisualContext,
             matchedIndicators = matched.distinct(),
             scanDurationMs = durMs
         )
