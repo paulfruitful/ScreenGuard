@@ -436,7 +436,7 @@ class LiteRtNsfwClassifier(
                         (centerS1.porn >= 0.42f && actionS1.porn >= 0.65f && (s2CropNsfw >= 0.16f || origS1.porn >= 0.08f)) ||
                             (maxCropPorn >= 0.72f && s2CropNsfw >= 0.20f) ||
                             (maxCropPorn >= 0.28f && s2CropNsfw >= 0.46f) ||
-                            ((maxCropPorn + maxCropSexy) >= 0.45f && maxCropPorn >= 0.14f && s2CropNsfw >= 0.50f) ||
+                            ((maxCropPorn + maxCropSexy) >= 0.52f && maxCropPorn >= 0.18f && s2CropNsfw >= 0.58f) ||
                             (textSignal.adultScore >= 0.35f && (maxCropPorn >= 0.24f || s2CropNsfw >= 0.38f)) ||
                             (textSignal.isExplicitPornDomain && maxCropPorn >= 0.12f)
 
@@ -821,35 +821,35 @@ class LiteRtNsfwClassifier(
                 ContentCategory.EXPLICIT to maxOf(pPorn, derivedExplicitScore)
             }
 
-            // 2. SEXUAL_ACTIVITY: Sexual activity without complete nudity, partially clothed sexual content
-            // (where both `porn` and `sexy` are substantially elevated), or low-light sexual scenes
-            // corroborated by Stage 2 OpenNSFW ResNet-50
+            // 2. SEXUAL_ACTIVITY: Requires genuine porn evidence (pPorn >= 0.16f) OR strong Stage 2
+            // corroboration (s2Nsfw >= 0.72f with pPorn >= 0.10f) — never escalates everyday lace
+            // camisoles/tank tops (pPorn < 0.12f) or dim-room face close-ups into SEXUAL_ACTIVITY.
             (pPorn in 0.22f..0.68f && pSexy >= 0.14f && (pPorn + pSexy) >= 0.48f) ||
-                (s2Triggered && (pPorn + pSexy) >= 0.24f && pPorn >= 0.03f && s2Nsfw >= 0.42f) ||
-                (s2Triggered && pSexy >= 0.48f && s2Nsfw >= 0.48f) ||
-                (s2Triggered && illum.isLowLight && (pPorn + pSexy) >= 0.08f && s2Nsfw >= 0.45f) -> {
+                (s2Triggered && pPorn >= 0.16f && (pPorn + pSexy) >= 0.36f && s2Nsfw >= 0.54f) ||
+                (s2Triggered && pSexy >= 0.52f && pPorn >= 0.10f && s2Nsfw >= 0.72f) ||
+                (s2Triggered && illum.isLowLight && pPorn >= 0.14f && (pPorn + pSexy) >= 0.24f && s2Nsfw >= 0.62f) -> {
                 ContentCategory.SEXUAL_ACTIVITY to maxOf(sexualActivityScore, s2Nsfw, (pPorn + 0.65f * pSexy).coerceIn(0f, 1f))
             }
 
             // 3. NUDITY: Visible intimate nudity (either direct high porn score, or low-light / shadowed
-            // nudity where Stage 1 porn >= 0.16 is corroborated by Stage 2 OpenNSFW or enhanced Stage 1)
+            // nudity where Stage 1 porn >= 0.18 is corroborated by Stage 2 OpenNSFW or enhanced Stage 1)
             pPorn >= nudityThreshold ||
                 (s2Triggered && pPorn >= 0.20f && s2Nsfw >= 0.42f) ||
                 (illum.isLowLight && pPorn >= 0.18f && (s2Nsfw >= 0.28f || pPorn >= 0.26f)) -> {
                 ContentCategory.NUDITY to maxOf(pPorn, derivedNudityScore, s2Nsfw)
             }
 
-            // 4. SUGGESTIVE: Sexualized but non-explicit imagery (e.g. glamour/bikini pose where Stage 2
-            // does NOT flag explicit sexual activity and porn < 0.14)
-            (pSexy >= 0.48f && pPorn < 0.14f && (!s2Triggered || s2Nsfw < 0.48f)) -> {
+            // 4. SUGGESTIVE: Strongly sexualized non-explicit imagery (pSexy >= 0.62f, low porn);
+            // everyday camisoles/tank tops/bare shoulders (pSexy < 0.62f, pPorn < 0.14f) stay NON_EXPLICIT.
+            (pSexy >= 0.62f && pPorn < 0.14f && (!s2Triggered || s2Nsfw < 0.72f)) -> {
                 ContentCategory.SUGGESTIVE to pSexy
             }
 
-            // 5. NON_EXPLICIT: Ordinary safe content, ordinary dark scenes, fitness, swimming, beach,
-            // fashion/underwear ads, portraits, and normal app UI
-            (combinedSafe >= 0.48f && pPorn < 0.18f) ||
-                (pSexy in 0.12f..0.48f && pPorn < 0.12f && (!s2Triggered || s2Nsfw < 0.42f)) ||
-                (s2Triggered && s2Sfw >= 0.68f && pPorn < 0.20f) ||
+            // 5. NON_EXPLICIT: Ordinary safe content, camisoles/tank tops, dim talking heads, fitness,
+            // swimming, beach, fashion portraits, and normal app UI
+            (combinedSafe >= 0.42f && pPorn < 0.16f) ||
+                (pSexy in 0.12f..0.62f && pPorn < 0.14f && (!s2Triggered || s2Nsfw < 0.65f)) ||
+                (s2Triggered && s2Sfw >= 0.62f && pPorn < 0.18f) ||
                 (combinedSafe >= 0.60f && pPorn < 0.05f && pHentai < 0.45f) -> {
                 ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
             }

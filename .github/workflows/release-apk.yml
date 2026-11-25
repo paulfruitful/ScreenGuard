@@ -40,7 +40,7 @@ jobs:
           CLEAN_VERSION="${RAW_VERSION#v}"
           CLEAN_VERSION="${CLEAN_VERSION#V}"
           TAG_NAME="v${CLEAN_VERSION}"
-          VERSION_CODE=$(( ${GITHUB_RUN_NUMBER} + 10 ))
+          VERSION_CODE=$(( ${GITHUB_RUN_NUMBER} + 20 ))
           echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
           echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
