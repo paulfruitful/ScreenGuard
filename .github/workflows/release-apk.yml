@@ -128,3 +128,31 @@ jobs:
                 ${EXTRA_FLAGS}
             fi
           fi
+
+      - name: Update landing-page repo download link
+        if: ${{ inputs.prerelease != true && secrets.LANDING_PAGE_TOKEN != '' }}
+        env:
+          LANDING_TOKEN: ${{ secrets.LANDING_PAGE_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          APK="${{ steps.meta.outputs.apk_name }}"
+          APK_URL="https://github.com/paulfruitful/ScreenGuard/releases/download/${TAG}/${APK}"
+
+          git clone "https://x-access-token:${LANDING_TOKEN}@github.com/paulfruitful/screen-guard-landing.git" landing-repo
+          cd landing-repo
+
+          # Update hero download button href, label, and setup step filename
+          sed -i -E "s|https://github\.com/paulfruitful/ScreenGuard/releases/download/[^\"']+\.apk|${APK_URL}|g" index.html
+          sed -i -E "s|Download Android( \(v[^)]+\))?|Download Android (${TAG})|g" index.html
+          sed -i -E "s|ScreenGuard-[^ <]+\.apk|${APK}|g" index.html
+
+          if git diff --quiet index.html; then
+            echo "Landing page already points to ${TAG}."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add index.html
+            git commit -m "Update download link to Screen Guard ${TAG}"
+            git push origin main
+          fi
