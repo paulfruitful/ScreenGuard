@@ -1,0 +1,130 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.2.0 — without leading v)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Screen Guard APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release version and tag
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW_VERSION="${{ inputs.version }}"
+          else
+            RAW_VERSION="${GITHUB_REF_NAME}"
+          fi
+          CLEAN_VERSION="${RAW_VERSION#v}"
+          CLEAN_VERSION="${CLEAN_VERSION#V}"
+          TAG_NAME="v${CLEAN_VERSION}"
+          VERSION_CODE=$(( ${GITHUB_RUN_NUMBER} + 10 ))
+          echo "version=${CLEAN_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=ScreenGuard-${TAG_NAME}.apk" >> "$GITHUB_OUTPUT"
+          echo "Resolved release: tag=${TAG_NAME}, version=${CLEAN_VERSION}, versionCode=${VERSION_CODE}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Stamp versionName and versionCode
+        shell: bash
+        run: |
+          sed -i -E "s/versionCode [0-9]+/versionCode ${{ steps.meta.outputs.version_code }}/" android/app/build.gradle
+          sed -i -E "s/versionName \"[^\"]+\"/versionName \"${{ steps.meta.outputs.version }}\"/" android/app/build.gradle
+          grep -E "versionCode|versionName" android/app/build.gradle
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Run Android unit tests
+        working-directory: android
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      - name: Build Release APK
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Stage release APK
+        shell: bash
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk "${{ steps.meta.outputs.apk_name }}"
+          ls -lh "${{ steps.meta.outputs.apk_name }}"
+
+      - name: Upload APK workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.apk_name }}
+          path: ${{ steps.meta.outputs.apk_name }}
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          APK="${{ steps.meta.outputs.apk_name }}"
+          EXTRA_FLAGS=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            EXTRA_FLAGS="--prerelease"
+          else
+            EXTRA_FLAGS="--latest"
+          fi
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; uploading/replacing APK asset..."
+            gh release upload "${TAG}" "${APK}" --clobber
+          else
+            if [ -f RELEASE_NOTES.md ]; then
+              gh release create "${TAG}" "${APK}" \
+                --title "Screen Guard ${TAG}" \
+                --notes-file RELEASE_NOTES.md \
+                ${EXTRA_FLAGS}
+            else
+              gh release create "${TAG}" "${APK}" \
+                --title "Screen Guard ${TAG}" \
+                --generate-notes \
+                ${EXTRA_FLAGS}
+            fi
+          fi
