@@ -90,6 +90,16 @@ class FalsePositiveAndStrictnessTest {
 
         val pxrnsHandle = OnDeviceNlpContextClassifier.classify("Lara Hidalgo @sweetpxrns")
         assertEquals("EXPLICIT_SEXUAL", pxrnsHandle.dominantClass)
+
+        val slangBatch = listOf(
+            "chudai video" to "EXPLICIT_SEXUAL",
+            "goonette reversecowgirl" to "EXPLICIT_SEXUAL",
+            "doggy and cowgirl" to "EXPLICIT_SEXUAL",
+            "wataa goon 69" to "SUGGESTIVE_PROMO"
+        )
+        for ((sample, expected) in slangBatch) {
+            assertEquals("Expected $expected for '$sample'", expected, OnDeviceNlpContextClassifier.classify(sample).dominantClass)
+        }
     }
 
     @Test
