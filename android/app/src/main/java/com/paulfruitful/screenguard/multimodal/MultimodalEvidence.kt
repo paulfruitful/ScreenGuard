@@ -81,7 +81,8 @@ data class MultimodalEvidenceBundle(
     val visual: VisualEvidence,
     val audio: AudioPlaybackEvidence,
     val caption: CaptionNodeEvidence,
-    val ocr: OcrFrameEvidence
+    val ocr: OcrFrameEvidence,
+    val contextVerifier: ContextVerificationEvidence = ContextVerificationEvidence()
 )
 
 data class FusedMultimodalDecision(

@@ -24,11 +24,14 @@ import com.paulfruitful.screenguard.classifier.DetectionEngine
 import com.paulfruitful.screenguard.dns.DnsFilterVpnService
 import com.paulfruitful.screenguard.multimodal.AudioPlaybackCapturePrototype
 import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
+import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
 import com.paulfruitful.screenguard.multimodal.FusedMultimodalDecision
 import com.paulfruitful.screenguard.multimodal.MultimodalEvidenceBundle
 import com.paulfruitful.screenguard.multimodal.MultimodalFusionEngine
 import com.paulfruitful.screenguard.multimodal.OcrFrameEvidence
+import com.paulfruitful.screenguard.multimodal.OnDeviceContextVerifier
 import com.paulfruitful.screenguard.multimodal.VisualEvidence
+import com.paulfruitful.screenguard.protection.ProtectionDecisionEngine
 import com.paulfruitful.screenguard.pipeline.FrameScheduler
 import com.paulfruitful.screenguard.pipeline.FrameTrace
 import com.paulfruitful.screenguard.pipeline.FrameTrigger
@@ -602,23 +605,38 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                     stage1DurationMs = (classification.processingDurationMs - classification.stage2DurationMs).coerceAtLeast(1L),
                     totalVisualDurationMs = classification.processingDurationMs
                 )
+                // Retrieve on-device ML Kit verification evidence (Face + Pose + OCR + NLP)
+                // captured in DetectionEngine while the frame bitmap was alive in memory.
+                val contextEvidence = DetectionEngine.getLatestContextEvidence()
+
                 val bundle = MultimodalEvidenceBundle(
                     visual = visualEvidence,
                     audio = audioEvidence,
                     caption = captionEvidence,
-                    ocr = OcrFrameEvidence(available = true, durationMs = 0L)
+                    ocr = OcrFrameEvidence(
+                        available = contextEvidence.ocrTextFound,
+                        durationMs = contextEvidence.durationMs
+                    ),
+                    contextVerifier = contextEvidence
                 )
 
                 val fused = MultimodalFusionEngine.fuse(bundle, policy)
                 latestFusedDecision = fused
 
-                // Apply fused category/confidence if multimodal fusion suppressed dialogue-only or boosted confidence
+                // Apply fused category/confidence (and tag deterministic URL domain blocks)
                 val effectiveClassification = if (fused.dialogueOnlySuppressed) {
                     classification.copy(
                         predictedCategory = ContentCategory.NON_EXPLICIT.name,
                         confidence = fused.finalConfidence,
                         isExplicit = false,
                         confirmedIntervention = false
+                    )
+                } else if (fused.primaryModality == "CAPTION_URL_DOMAIN") {
+                    classification.copy(
+                        predictedCategory = ContentCategory.EXPLICIT.name,
+                        confidence = fused.finalConfidence,
+                        isExplicit = true,
+                        modelVersion = ProtectionDecisionEngine.DETERMINISTIC_URL_MODEL_VERSION
                     )
                 } else {
                     classification.copy(

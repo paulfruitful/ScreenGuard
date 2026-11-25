@@ -19,6 +19,7 @@ class ProtectionDecisionEngine {
     private var currentOverlayState: OverlayState = OverlayState.HIDDEN
     private var consecutivePositiveFrames: Int = 0
     private var consecutiveSafeFrames: Int = 0
+    private var accumulatedViolationScore: Float = 0f
     private var ewmaViolationConfidence: Float = 0f
     private var ewmaInitialized: Boolean = false
 
@@ -29,13 +30,17 @@ class ProtectionDecisionEngine {
 
     companion object {
         private const val EWMA_ALPHA = 0.62f
+        const val DETERMINISTIC_URL_MODEL_VERSION = "URL_DOMAIN_DETERMINISTIC"
         /**
-         * Broad SUGGESTIVE/SEXY predictions require 2 consecutive frames (unless confidence is
-         * very high >= 0.88f) to eliminate single-frame false alarms on gym/sports/scroll frames,
-         * while EXPLICIT, NUDITY, and SEXUAL_ACTIVITY remain immediate 1-frame triggers.
+         * 2–3 frame accumulative confirmation gates to eliminate single-frame false positives:
+         * - Explicit porn URLs: instant 1-frame block (deterministic, zero false positives).
+         * - EXPLICIT / NUDITY visual detections: 2 consecutive frames (~1.2 s) AND accumulative >= 1.25.
+         * - SEXUAL_ACTIVITY / SUGGESTIVE (incl. clothed twerking): 3 consecutive frames (~2.2 s) AND accumulative >= 1.85.
          */
-        private const val SUGGESTIVE_CONFIRMATION_FRAMES = 2
-        private const val SUGGESTIVE_INSTANT_OVERRIDE_CONFIDENCE = 0.88f
+        private const val EXPLICIT_CONFIRMATION_FRAMES = 2
+        private const val EXPLICIT_ACCUMULATIVE_THRESHOLD = 1.25f
+        private const val SUGGESTIVE_CONFIRMATION_FRAMES = 3
+        private const val SUGGESTIVE_ACCUMULATIVE_THRESHOLD = 1.85f
     }
 
     fun getCurrentState(): OverlayState = synchronized(lock) { currentOverlayState }
@@ -66,6 +71,7 @@ class ProtectionDecisionEngine {
         trackedPackage = newPackageName
         consecutivePositiveFrames = 0
         consecutiveSafeFrames = 0
+        accumulatedViolationScore = 0f
         ewmaViolationConfidence = 0f
         ewmaInitialized = false
         activeTriggerCategory = "NONE"
@@ -97,6 +103,7 @@ class ProtectionDecisionEngine {
         currentOverlayState = OverlayState.HIDDEN
         consecutivePositiveFrames = 0
         consecutiveSafeFrames = 0
+        accumulatedViolationScore = 0f
         ewmaViolationConfidence = 0f
         ewmaInitialized = false
         protectionShownAtElapsedMs = 0L
@@ -198,26 +205,30 @@ class ProtectionDecisionEngine {
             currentOverlayState == OverlayState.PROTECTED ||
                 currentOverlayState == OverlayState.RECOVERING
 
-        // 3. State transitions based on classification category and temporal history
+        // 3. State transitions based on 2–3 frame accumulative confirmation
         if (catEval.violatesPolicy) {
             consecutivePositiveFrames++
             consecutiveSafeFrames = 0
+            accumulatedViolationScore += catEval.effectiveScore
             activeTriggerCategory = result.predictedCategory
 
-            val isSuggestiveOnly = result.predictedCategory == ContentCategory.SUGGESTIVE.name
-            val requiredFrames = if (isSuggestiveOnly) {
-                maxOf(SUGGESTIVE_CONFIRMATION_FRAMES, policy.confirmationFramesRequired)
-            } else {
-                policy.confirmationFramesRequired.coerceAtLeast(1)
+            val isDeterministicUrl = result.modelVersion == DETERMINISTIC_URL_MODEL_VERSION
+            val isSuggestiveOrActivity =
+                result.predictedCategory == ContentCategory.SUGGESTIVE.name ||
+                    result.predictedCategory == ContentCategory.SEXUAL_ACTIVITY.name
+
+            val requiredFrames = when {
+                isDeterministicUrl -> 1
+                isSuggestiveOrActivity -> maxOf(SUGGESTIVE_CONFIRMATION_FRAMES, policy.confirmationFramesRequired)
+                else -> maxOf(EXPLICIT_CONFIRMATION_FRAMES, policy.confirmationFramesRequired)
             }
-            val confirmed = if (isSuggestiveOnly) {
-                consecutivePositiveFrames >= requiredFrames ||
-                    catEval.effectiveScore >= SUGGESTIVE_INSTANT_OVERRIDE_CONFIDENCE
-            } else {
-                // EXPLICIT / NUDITY / SEXUAL_ACTIVITY stay immediate 1-frame triggers when above threshold.
-                consecutivePositiveFrames >= requiredFrames ||
-                    catEval.effectiveScore >= catEval.thresholdUsed
+            val requiredAccumScore = when {
+                isDeterministicUrl -> 0.5f
+                isSuggestiveOrActivity -> SUGGESTIVE_ACCUMULATIVE_THRESHOLD
+                else -> EXPLICIT_ACCUMULATIVE_THRESHOLD
             }
+            val confirmed = isDeterministicUrl ||
+                (consecutivePositiveFrames >= requiredFrames && accumulatedViolationScore >= requiredAccumScore)
 
             return if (confirmed || isCurrentlyShowingOverlay) {
                 if (!isCurrentlyShowingOverlay) {
@@ -309,6 +320,7 @@ class ProtectionDecisionEngine {
 
             return if (minDurationMet && recoveryFramesMet) {
                 consecutivePositiveFrames = 0
+                accumulatedViolationScore = 0f
                 activeTriggerCategory = "NONE"
                 currentOverlayState = OverlayState.HIDDEN
                 protectionShownAtElapsedMs = 0L
@@ -343,6 +355,7 @@ class ProtectionDecisionEngine {
             }
         } else {
             consecutivePositiveFrames = 0
+            accumulatedViolationScore = 0f
             activeTriggerCategory = "NONE"
             currentOverlayState = OverlayState.HIDDEN
             return ProtectionDecision(

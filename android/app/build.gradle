@@ -21,8 +21,8 @@ android {
         applicationId "com.paulfruitful.screenguard"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 13
-        versionName "1.2.2"
+        versionCode 14
+        versionName "1.3.0"
 
         ndk {
             abiFilters "arm64-v8a", "x86_64"
@@ -76,6 +76,13 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.google.ai.edge.litert:litert:1.4.2")
+    // Small on-device ML Kit models for context-aware verification (100% local, zero cloud calls):
+    // - Face detection (~2 MB, <8ms): talking-head / portrait false-positive suppression
+    // - Pose detection (~3 MB, <15ms): clothed twerking & suggestive posture detection
+    // - Text recognition (~4 MB, <30ms): burned-in video caption OCR on borderline frames
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
     testImplementation("junit:junit:4.13.2")
 
     if (hermesEnabled.toBoolean()) {

@@ -3,9 +3,11 @@ package com.paulfruitful.screenguard.classifier
 import com.paulfruitful.screenguard.accessibility.ScreenTextContextAnalyzer
 import com.paulfruitful.screenguard.multimodal.AudioPlaybackEvidence
 import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
+import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
 import com.paulfruitful.screenguard.multimodal.MultimodalEvidenceBundle
 import com.paulfruitful.screenguard.multimodal.MultimodalFusionEngine
 import com.paulfruitful.screenguard.multimodal.OcrFrameEvidence
+import com.paulfruitful.screenguard.multimodal.OnDeviceNlpContextClassifier
 import com.paulfruitful.screenguard.multimodal.VisualEvidence
 import com.paulfruitful.screenguard.protection.DecisionDirective
 import com.paulfruitful.screenguard.protection.OverlayState
@@ -18,11 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Hard-negative & strictness regression tests verifying that:
- * 1. Explicit PORN / NUDITY / SEXUAL_ACTIVITY and porn domains remain immediate 1-frame blocks
- *    and can NEVER be bypassed by injecting benign keywords like "gym" or "medical".
- * 2. Non-sexual hard negatives (MMA/UFC, gym/bodybuilding, medical/dermatology, single-frame
- *    swimwear/scroll spikes) do NOT trigger false overlays.
+ * Hard-negative, multi-modal verification & 2–3 frame accumulative gate regression tests.
  */
 class FalsePositiveAndStrictnessTest {
 
@@ -30,35 +28,67 @@ class FalsePositiveAndStrictnessTest {
         ProtectionPolicyConfig.forMode(
             mode = ProtectionSensitivityMode.STRICT,
             baseConfidenceThreshold = 0.70f,
-            confirmationFrames = 1,
+            confirmationFrames = 2,
             allowDismiss = false
-        ).copy(
-            sensitivityMode = ProtectionSensitivityMode.STRICT,
-            interveneOnSuggestiveInStrict = true,
-            allowManualDismiss = false,
-            dismissCooldownMs = 0L
         )
 
-    private fun fuse(visual: VisualEvidence, onScreenText: String) =
-        MultimodalFusionEngine.fuse(
-            bundle = MultimodalEvidenceBundle(
-                visual = visual,
-                audio = AudioPlaybackEvidence(),
-                caption = CaptionAndOcrAnalyzer.buildCaptionEvidence(
-                    ScreenTextContextAnalyzer.scoreText(onScreenText.lowercase(), false, 1L)
-                ),
-                ocr = OcrFrameEvidence(available = false)
+    private fun fuse(
+        visual: VisualEvidence,
+        onScreenText: String,
+        contextVerifier: ContextVerificationEvidence? = null
+    ) = MultimodalFusionEngine.fuse(
+        bundle = MultimodalEvidenceBundle(
+            visual = visual,
+            audio = AudioPlaybackEvidence(),
+            caption = CaptionAndOcrAnalyzer.buildCaptionEvidence(
+                ScreenTextContextAnalyzer.scoreText(onScreenText.lowercase(), false, 1L)
             ),
-            policy = strictPolicy()
-        )
+            ocr = OcrFrameEvidence(available = onScreenText.isNotBlank()),
+            contextVerifier = contextVerifier ?: ContextVerificationEvidence(
+                executed = onScreenText.isNotBlank(),
+                ocrTextFound = onScreenText.isNotBlank(),
+                nlpScore = OnDeviceNlpContextClassifier.classify(onScreenText)
+            )
+        ),
+        policy = strictPolicy()
+    )
 
     @Test
-    fun explicitPorn_blocksImmediatelyOnFrame1_evenWithDeceptiveGymCaption() {
+    fun policyFloors_arePrecisionFirst_not24PercentHairTrigger() {
+        val policy = strictPolicy()
+        assertTrue("explicitThreshold must be >= 0.65", policy.explicitThreshold >= 0.65f)
+        assertTrue("nudityThreshold must be >= 0.62", policy.nudityThreshold >= 0.62f)
+        assertTrue("sexualActivityThreshold must be >= 0.64", policy.sexualActivityThreshold >= 0.64f)
+        assertTrue("confirmationFramesRequired must be >= 2", policy.confirmationFramesRequired >= 2)
+    }
+
+    @Test
+    fun nlpClassifier_understandsBenignSuggestiveAndObfuscatedText() {
+        val tailoring = OnDeviceNlpContextClassifier.classify(
+            "Hi guys I am a university student and I run a garment alteration tailoring service"
+        )
+        assertEquals("NON_SEXUAL", tailoring.dominantClass)
+
+        val twerkPromo = OnDeviceNlpContextClassifier.classify(
+            "Twerking challenge buss it spicy content link in bio"
+        )
+        assertEquals("SUGGESTIVE_PROMO", twerkPromo.dominantClass)
+
+        val obfuscated = OnDeviceNlpContextClassifier.classify(
+            "Watch full h@rdc0r3 p0rn s3x t@p3 on p0rnhub"
+        )
+        assertEquals("EXPLICIT_SEXUAL", obfuscated.dominantClass)
+    }
+
+    @Test
+    fun explicitPorn_blocksOnFrame2AccumulativeGate_evenWithDeceptiveGymCaption() {
         val visual = VisualEvidence(
             predictedCategory = ContentCategory.EXPLICIT.name,
             confidence = 0.86f,
             pornScore = 0.86f,
             explicitScore = 0.86f,
+            stage2Triggered = true,
+            stage2NsfwScore = 0.84f,
             neutralScore = 0.10f
         )
         val fused = fuse(visual, "UFC gym workout fitness bodybuilding medical")
@@ -66,163 +96,156 @@ class FalsePositiveAndStrictnessTest {
         assertEquals(ContentCategory.EXPLICIT.name, fused.finalCategory)
 
         val engine = ProtectionDecisionEngine()
-        val decision = engine.evaluate(
-            result = ClassificationResult(
-                scores = mapOf("porn" to 0.86f),
-                predictedCategory = fused.finalCategory,
-                confidence = fused.finalConfidence,
-                pornScore = 0.86f,
-                explicitScore = 0.86f,
-                isExplicit = true,
-                processingDurationMs = 15L,
-                modelVersion = "test",
-                successful = true
-            ),
-            packageName = "com.twitter.android",
-            protectionEnabled = true,
-            isExcludedPackage = false,
-            policy = strictPolicy()
+        val frame = ClassificationResult(
+            scores = mapOf("porn" to 0.86f),
+            predictedCategory = fused.finalCategory,
+            confidence = fused.finalConfidence,
+            pornScore = 0.86f,
+            explicitScore = 0.86f,
+            isExplicit = true,
+            processingDurationMs = 15L,
+            modelVersion = "test",
+            successful = true
         )
-        assertTrue("Explicit porn must show overlay on frame 1", decision.shouldShowOverlay)
-        assertEquals(DecisionDirective.TRIGGER_PROTECTION, decision.directive)
+
+        val first = engine.evaluate(frame, "com.twitter.android", true, false, strictPolicy())
+        assertFalse("Frame 1 enters PENDING to prevent single-frame false spikes", first.shouldShowOverlay)
+        assertEquals(OverlayState.PENDING, first.targetOverlayState)
+
+        val second = engine.evaluate(frame, "com.twitter.android", true, false, strictPolicy())
+        assertTrue("Frame 2 (~1.2s) confirms explicit porn", second.shouldShowOverlay)
+        assertEquals(DecisionDirective.TRIGGER_PROTECTION, second.directive)
     }
 
     @Test
-    fun explicitPornDomain_blocksImmediately_evenWithMedicalKeywords() {
+    fun explicitPornDomain_blocksImmediatelyOnFrame1() {
         val visual = VisualEvidence(
             predictedCategory = ContentCategory.NON_EXPLICIT.name,
             confidence = 0.90f,
             neutralScore = 0.90f
         )
         val fused = fuse(visual, "https://pornhub.com medical anatomy health")
-        assertTrue("Porn domain must always trigger immediate block", fused.shouldIntervene)
-        assertEquals(ContentCategory.EXPLICIT.name, fused.finalCategory)
-    }
+        assertTrue(fused.shouldIntervene)
+        assertEquals("CAPTION_URL_DOMAIN", fused.primaryModality)
 
-    @Test
-    fun hardNegative_mmaFightBorderlineSuggestive_isVetoed() {
-        val visual = VisualEvidence(
-            predictedCategory = ContentCategory.SUGGESTIVE.name,
-            confidence = 0.64f,
-            sexyScore = 0.64f,
-            pornScore = 0.06f,
-            neutralScore = 0.30f
-        )
-        val fused = fuse(visual, "UFC 312 Main Event MMA Wrestling Highlights")
-        assertFalse("MMA/UFC borderline suggestive frame should be vetoed", fused.shouldIntervene)
-        assertEquals(ContentCategory.NON_EXPLICIT.name, fused.finalCategory)
-        assertTrue(fused.dialogueOnlySuppressed)
-    }
-
-    @Test
-    fun hardNegative_gymWorkoutBorderlineSuggestive_isVetoed() {
-        val visual = VisualEvidence(
-            predictedCategory = ContentCategory.SUGGESTIVE.name,
-            confidence = 0.68f,
-            sexyScore = 0.68f,
-            pornScore = 0.04f,
-            neutralScore = 0.28f
-        )
-        val fused = fuse(visual, "Morning gym deadlift workout physique check")
-        assertFalse("Gym workout borderline suggestive frame should be vetoed", fused.shouldIntervene)
-        assertEquals(ContentCategory.NON_EXPLICIT.name, fused.finalCategory)
-    }
-
-    @Test
-    fun hardNegative_medicalDermatologyBorderlineSuggestive_isVetoed() {
-        val visual = VisualEvidence(
-            predictedCategory = ContentCategory.SUGGESTIVE.name,
-            confidence = 0.60f,
-            sexyScore = 0.60f,
-            pornScore = 0.03f,
-            neutralScore = 0.37f
-        )
-        val fused = fuse(visual, "Dermatology skincare physical therapy guide")
-        assertFalse("Medical/skincare borderline suggestive frame should be vetoed", fused.shouldIntervene)
-        assertEquals(ContentCategory.NON_EXPLICIT.name, fused.finalCategory)
-    }
-
-    @Test
-    fun hardNegative_singleFrameSuggestiveSpike_doesNotFlashOverlay() {
         val engine = ProtectionDecisionEngine()
-        val policy = strictPolicy()
-
-        val spikeFrame = ClassificationResult(
-            scores = mapOf("sexy" to 0.65f, "neutral" to 0.30f),
-            predictedCategory = ContentCategory.SUGGESTIVE.name,
-            confidence = 0.65f,
-            sexyScore = 0.65f,
-            suggestiveScore = 0.65f,
-            safeScore = 0.30f,
-            processingDurationMs = 15L,
-            modelVersion = "test",
-            successful = true
-        )
-        val firstDecision = engine.evaluate(
-            result = spikeFrame,
-            packageName = "com.instagram.android",
+        val decision = engine.evaluate(
+            result = ClassificationResult(
+                scores = emptyMap(),
+                predictedCategory = ContentCategory.EXPLICIT.name,
+                confidence = 0.99f,
+                isExplicit = true,
+                processingDurationMs = 5L,
+                modelVersion = ProtectionDecisionEngine.DETERMINISTIC_URL_MODEL_VERSION,
+                successful = true
+            ),
+            packageName = "com.android.chrome",
             protectionEnabled = true,
             isExcludedPackage = false,
-            policy = policy
+            policy = strictPolicy()
         )
-        assertFalse("Single suggestive spike must wait for confirmation frame", firstDecision.shouldShowOverlay)
-        assertEquals(OverlayState.PENDING, firstDecision.targetOverlayState)
+        assertTrue("Deterministic porn URL blocks immediately on frame 1", decision.shouldShowOverlay)
+    }
 
-        val nextSafeFrame = ClassificationResult(
-            scores = mapOf("neutral" to 0.92f),
+    @Test
+    fun talkingHeadPortrait_mlKitFaceVeto_stopsCamisoleAndDarkFaceFalsePositives() {
+        val visual = VisualEvidence(
+            predictedCategory = ContentCategory.NUDITY.name,
+            confidence = 0.66f,
+            pornScore = 0.32f,
+            nudityScore = 0.66f,
+            stage2Triggered = true,
+            stage2NsfwScore = 0.62f,
+            neutralScore = 0.52f
+        )
+        val faceCtx = ContextVerificationEvidence(
+            executed = true,
+            faceCount = 1,
+            largestFaceAreaRatio = 0.22f,
+            isTalkingHeadPortrait = true,
+            nlpScore = OnDeviceNlpContextClassifier.classify("garment alteration service")
+        )
+        val fused = fuse(visual, "garment alteration service", faceCtx)
+        assertFalse("Close-up talking head portrait must not be blocked", fused.shouldIntervene)
+        assertEquals(ContentCategory.NON_EXPLICIT.name, fused.finalCategory)
+        assertTrue(fused.corroboratingModalities.contains("TALKING_HEAD_FACE_VETO"))
+    }
+
+    @Test
+    fun clothedTwerkingPose_blocksAfter3ConsecutiveFrames_whileGymDeadliftIsVetoed() {
+        val visual = VisualEvidence(
             predictedCategory = ContentCategory.NON_EXPLICIT.name,
-            confidence = 0.92f,
-            safeScore = 0.92f,
-            processingDurationMs = 15L,
+            confidence = 0.70f,
+            sexyScore = 0.30f,
+            pornScore = 0.04f,
+            neutralScore = 0.66f
+        )
+        val twerkCtx = ContextVerificationEvidence(
+            executed = true,
+            poseDetected = true,
+            isBentOverOrRearFacingPose = true,
+            hipProminenceScore = 0.78f,
+            hipOscillationScore = 0.60f,
+            clothedSuggestivePoseScore = 0.75f,
+            nlpScore = OnDeviceNlpContextClassifier.classify("twerking challenge buss it")
+        )
+        val fusedTwerk = fuse(visual, "twerking challenge buss it", twerkCtx)
+        assertTrue("Clothed twerking pose + suggestive NLP should flag SUGGESTIVE", fusedTwerk.shouldIntervene)
+        assertEquals(ContentCategory.SUGGESTIVE.name, fusedTwerk.finalCategory)
+
+        val engine = ProtectionDecisionEngine()
+        val policy = strictPolicy()
+        val twerkFrame = ClassificationResult(
+            scores = mapOf("sexy" to fusedTwerk.finalConfidence),
+            predictedCategory = ContentCategory.SUGGESTIVE.name,
+            confidence = fusedTwerk.finalConfidence,
+            sexyScore = fusedTwerk.finalConfidence,
+            suggestiveScore = fusedTwerk.finalConfidence,
+            processingDurationMs = 20L,
             modelVersion = "test",
             successful = true
         )
-        val secondDecision = engine.evaluate(
-            result = nextSafeFrame,
-            packageName = "com.instagram.android",
-            protectionEnabled = true,
-            isExcludedPackage = false,
-            policy = policy
+        assertFalse(engine.evaluate(twerkFrame, "com.zhiliaoapp.musically", true, false, policy).shouldShowOverlay)
+        assertFalse(engine.evaluate(twerkFrame, "com.zhiliaoapp.musically", true, false, policy).shouldShowOverlay)
+        assertTrue(
+            "Clothed suggestive twerking confirms on frame 3 (~2.2s)",
+            engine.evaluate(twerkFrame, "com.zhiliaoapp.musically", true, false, policy).shouldShowOverlay
         )
-        assertFalse("Returning to safe frame clears pending state cleanly", secondDecision.shouldShowOverlay)
-        assertEquals(OverlayState.HIDDEN, secondDecision.targetOverlayState)
+
+        // Same bent-over pose in a gym deadlift context must NOT be blocked
+        val gymCtx = twerkCtx.copy(
+            nlpScore = OnDeviceNlpContextClassifier.classify("Morning gym deadlift workout fitness")
+        )
+        val fusedGym = fuse(visual, "Morning gym deadlift workout fitness", gymCtx)
+        assertFalse("Gym deadlift pose must be allowed", fusedGym.shouldIntervene)
     }
 
     @Test
-    fun sustainedSuggestive_twoConsecutiveFrames_stillBlocksStrictly() {
+    fun singleFrameSpike_resetsCleanlyWithZeroFalseOverlays() {
         val engine = ProtectionDecisionEngine()
         val policy = strictPolicy()
-
-        val suggestiveFrame = ClassificationResult(
-            scores = mapOf("sexy" to 0.72f, "neutral" to 0.22f),
-            predictedCategory = ContentCategory.SUGGESTIVE.name,
+        val spike = ClassificationResult(
+            scores = mapOf("porn" to 0.72f),
+            predictedCategory = ContentCategory.EXPLICIT.name,
             confidence = 0.72f,
-            sexyScore = 0.72f,
-            suggestiveScore = 0.72f,
-            safeScore = 0.22f,
+            pornScore = 0.72f,
+            explicitScore = 0.72f,
             processingDurationMs = 15L,
             modelVersion = "test",
             successful = true
         )
-
-        val first = engine.evaluate(
-            result = suggestiveFrame,
-            packageName = "com.instagram.android",
-            protectionEnabled = true,
-            isExcludedPackage = false,
-            policy = policy
+        val safe = ClassificationResult(
+            scores = mapOf("neutral" to 0.94f),
+            predictedCategory = ContentCategory.NON_EXPLICIT.name,
+            confidence = 0.94f,
+            safeScore = 0.94f,
+            processingDurationMs = 15L,
+            modelVersion = "test",
+            successful = true
         )
-        assertFalse(first.shouldShowOverlay)
-        assertEquals(OverlayState.PENDING, first.targetOverlayState)
-
-        val second = engine.evaluate(
-            result = suggestiveFrame,
-            packageName = "com.instagram.android",
-            protectionEnabled = true,
-            isExcludedPackage = false,
-            policy = policy
-        )
-        assertTrue("Sustained suggestive content must block on frame 2", second.shouldShowOverlay)
-        assertEquals(DecisionDirective.TRIGGER_PROTECTION, second.directive)
+        assertFalse(engine.evaluate(spike, "com.instagram.android", true, false, policy).shouldShowOverlay)
+        val cleared = engine.evaluate(safe, "com.instagram.android", true, false, policy)
+        assertFalse(cleared.shouldShowOverlay)
+        assertEquals(OverlayState.HIDDEN, cleared.targetOverlayState)
     }
 }

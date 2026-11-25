@@ -181,6 +181,12 @@ object ScreenTextContextAnalyzer {
 
     fun getLatestSignal(): ScreenTextSignal = latestSignal
 
+    fun getLatestRawText(): String = try {
+        rollingTextBuffer.toString().trim()
+    } catch (_: Exception) {
+        ""
+    }
+
     /**
      * Zero-IPC inline event text ingestion (< 0.02 ms).
      * Extracts text and contentDescription directly from incoming [android.view.accessibility.AccessibilityEvent]

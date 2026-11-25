@@ -3,6 +3,9 @@ package com.paulfruitful.screenguard.classifier
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import com.paulfruitful.screenguard.accessibility.ScreenTextContextAnalyzer
+import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
+import com.paulfruitful.screenguard.multimodal.OnDeviceContextVerifier
 import com.paulfruitful.screenguard.storage.LocalStorage
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -22,6 +25,9 @@ object DetectionEngine {
 
     @Volatile
     private var latestResult: ClassificationResult? = null
+
+    @Volatile
+    private var latestContextEvidence: ContextVerificationEvidence = ContextVerificationEvidence()
 
     private val activeInferenceJobs = AtomicInteger(0)
     private val totalDetections = AtomicInteger(0)
@@ -64,6 +70,8 @@ object DetectionEngine {
     fun getActiveClassifier(): ContentClassifier = activeClassifier
 
     fun getLatestResult(): ClassificationResult? = latestResult
+
+    fun getLatestContextEvidence(): ContextVerificationEvidence = latestContextEvidence
 
     fun getTotalDetections(): Int = totalDetections.get()
 
@@ -186,6 +194,24 @@ object DetectionEngine {
                 lastFrameHash = frameHash
                 lastFramePackage = packageName
                 lastFrameElapsedMs = nowElapsed
+            }
+
+            // 3b. Run small on-device ML Kit verifiers (Face + Pose + Burned-in Caption OCR + NLP)
+            // ONLY on suspicious/borderline frames while downsampledBitmap is still alive in memory.
+            val needsContextVerification =
+                rawResult.predictedCategory != ContentCategory.NON_EXPLICIT.name ||
+                    rawResult.pornScore >= 0.14f ||
+                    rawResult.sexyScore >= 0.18f ||
+                    rawResult.stage2NsfwScore >= 0.30f
+
+            latestContextEvidence = if (needsContextVerification && !downsampledBitmap.isRecycled) {
+                OnDeviceContextVerifier.verifyFrame(
+                    bitmap = downsampledBitmap,
+                    accessibilityText = ScreenTextContextAnalyzer.getLatestRawText(),
+                    runOcr = true
+                )
+            } else {
+                ContextVerificationEvidence(executed = false)
             }
 
             // 4. Pass through Temporal Decision Engine for EWMA smoothing and multi-frame confirmation

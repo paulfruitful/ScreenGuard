@@ -77,7 +77,7 @@ object ProtectionCoordinator {
         val baseConfig = ProtectionPolicyConfig.forMode(
             mode = ProtectionSensitivityMode.STRICT,
             baseConfidenceThreshold = prefs.confidenceThreshold,
-            confirmationFrames = 1,
+            confirmationFrames = 2,
             allowDismiss = false
         )
         return baseConfig.copy(

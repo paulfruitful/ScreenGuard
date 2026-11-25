@@ -549,15 +549,14 @@ class LiteRtNsfwClassifier(
                     }
                 }
 
-                // 3. Selective Second-Stage Verification (OpenNSFW ResNet-50)
-                // Triggered when:
-                // - Baseline Stage 1 was UNCERTAIN
-                // - Stage 1 has intermediate porn/hentai (`0.04..0.52`) or suggestive/partial clothing (`sexy >= 0.16`)
-                // - Frame is low-light (`illum.isLowLight`) and not a pure UI/drawing screen
+                // 3. Mandatory Second-Stage Verification (OpenNSFW ResNet-50)
+                // Always run Stage 2 whenever Stage 1 sees any meaningful porn/hentai/sexy signal
+                // so no single model can hallucinate a false positive without independent corroboration.
                 val shouldRunStage2 =
                     baselineResult.predictedCategory == ContentCategory.UNCERTAIN.name ||
-                        (effectiveS1.porn in 0.04f..0.55f) ||
-                        (effectiveS1.sexy >= 0.16f) ||
+                        effectiveS1.porn >= 0.14f ||
+                        effectiveS1.hentai >= 0.35f ||
+                        effectiveS1.sexy >= 0.20f ||
                         (illum.isLowLight && origS1.drawings < 0.70f)
 
                 var stage2Res: SecondStageResult? = null
@@ -830,10 +829,21 @@ class LiteRtNsfwClassifier(
                 ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
             }
 
-            // 1. EXPLICIT: High-confidence explicit sexual imagery
-            pPorn >= explicitThreshold ||
+            // Dual-model disagreement guard: if Stage 2 OpenNSFW ResNet-50 ran and strongly
+            // believes the frame is SFW (s2Nsfw < 0.45), do NOT allow a single-model Stage 1
+            // spike to classify as EXPLICIT / NUDITY / SEXUAL_ACTIVITY.
+            s2Triggered && s2Nsfw < 0.45f && pHentai < 0.78f && !hasExplicitTextContext -> {
+                if (pSexy >= 0.65f && pPorn < 0.20f) {
+                    ContentCategory.SUGGESTIVE to pSexy
+                } else {
+                    ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
+                }
+            }
+
+            // 1. EXPLICIT: High-confidence dual-model explicit sexual imagery
+            (pPorn >= explicitThreshold && (!s2Triggered || s2Nsfw >= 0.55f)) ||
                 (pHentai >= explicitThreshold && pDrawings < 0.30f) ||
-                (s2Triggered && pPorn >= 0.50f && s2Nsfw >= 0.68f) -> {
+                (s2Triggered && pPorn >= 0.52f && s2Nsfw >= 0.68f) -> {
                 ContentCategory.EXPLICIT to maxOf(pPorn, derivedExplicitScore)
             }
 

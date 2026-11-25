@@ -37,32 +37,32 @@ data class ProtectionPolicyConfig(
     val sensitivityMode: ProtectionSensitivityMode = ProtectionSensitivityMode.STRICT,
     val interveneOnSuggestiveInStrict: Boolean = true,
     val allowManualDismiss: Boolean = false,
-    val explicitThreshold: Float = 0.38f,
-    val nudityThreshold: Float = 0.25f,
-    val sexualActivityThreshold: Float = 0.26f,
-    val suggestiveThresholdStrict: Float = 0.46f,
-    val confirmationFramesRequired: Int = 1,
-    val recoverySafeFramesRequired: Int = 1,
+    val explicitThreshold: Float = 0.68f,
+    val nudityThreshold: Float = 0.64f,
+    val sexualActivityThreshold: Float = 0.66f,
+    val suggestiveThresholdStrict: Float = 0.72f,
+    val confirmationFramesRequired: Int = 2,
+    val recoverySafeFramesRequired: Int = 2,
     val minDisplayDurationMs: Long = 1100L,
     val dismissCooldownMs: Long = 0L
 ) {
     companion object {
         fun forMode(
             mode: ProtectionSensitivityMode = ProtectionSensitivityMode.STRICT,
-            baseConfidenceThreshold: Float = 0.55f,
-            confirmationFrames: Int = 1,
+            baseConfidenceThreshold: Float = 0.70f,
+            confirmationFrames: Int = 2,
             allowDismiss: Boolean = false
         ): ProtectionPolicyConfig {
             return ProtectionPolicyConfig(
                 sensitivityMode = ProtectionSensitivityMode.STRICT,
                 interveneOnSuggestiveInStrict = true,
                 allowManualDismiss = false,
-                explicitThreshold = (baseConfidenceThreshold * 0.65f).coerceIn(0.35f, 0.50f),
-                nudityThreshold = (baseConfidenceThreshold * 0.40f).coerceIn(0.24f, 0.35f),
-                sexualActivityThreshold = (baseConfidenceThreshold * 0.42f).coerceIn(0.25f, 0.36f),
-                suggestiveThresholdStrict = 0.46f,
-                confirmationFramesRequired = 1,
-                recoverySafeFramesRequired = 1,
+                explicitThreshold = baseConfidenceThreshold.coerceIn(0.65f, 0.85f),
+                nudityThreshold = (baseConfidenceThreshold * 0.92f).coerceIn(0.62f, 0.80f),
+                sexualActivityThreshold = (baseConfidenceThreshold * 0.94f).coerceIn(0.64f, 0.80f),
+                suggestiveThresholdStrict = 0.72f,
+                confirmationFramesRequired = confirmationFrames.coerceAtLeast(2),
+                recoverySafeFramesRequired = 2,
                 minDisplayDurationMs = 1100L,
                 dismissCooldownMs = 0L
             )

@@ -34,56 +34,117 @@ object MultimodalFusionEngine {
         val a = bundle.audio
         val c = bundle.caption
         val o = bundle.ocr
+        val ctx = bundle.contextVerifier
+        val nlp = ctx.nlpScore
 
         val corroborating = mutableListOf<String>()
 
-        // 1. Explicit Porn Domain in Browser URL Bar (e.g., pornhub.com, xvideos.com, xnxx.com)
-        // Explicit porn domains are NEVER vetoed by benign words on the page.
-        if (c.available && c.explicitPornDomainDetected) {
+        // 1. Explicit Porn Domain in Browser URL Bar or OCR Text (deterministic, instant 1-frame block)
+        if ((c.available && c.explicitPornDomainDetected) || nlp.explicitPornDomainDetected) {
             corroborating.add("CAPTION_URL_DOMAIN")
             if (v.available && v.pornScore >= 0.15f) corroborating.add("VISUAL")
             val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
             return FusedMultimodalDecision(
                 finalCategory = ContentCategory.EXPLICIT.name,
-                finalConfidence = maxOf(0.95f, v.confidence),
+                finalConfidence = maxOf(0.99f, v.confidence),
                 shouldIntervene = true,
                 primaryModality = "CAPTION_URL_DOMAIN",
                 corroboratingModalities = corroborating,
                 uncertaintyPreserved = false,
                 dialogueOnlySuppressed = false,
-                fusionExplanation = "Explicit adult domain detected in browser URL bar",
+                fusionExplanation = "Explicit adult domain detected in URL/OCR text",
                 decisionDurationMs = dur
             )
         }
 
-        // 1b. Benign Non-Sexual Visual Context Veto (e.g., gym, MMA/UFC, swimming, medical, skincare):
-        // ONLY dampens borderline SUGGESTIVE / UNCERTAIN frames when explicit porn/hentai/stage2
-        // signals are genuinely low and no hardcore text is present. NEVER overrides EXPLICIT,
-        // NUDITY, SEXUAL_ACTIVITY, or high-confidence porn/hentai detections.
-        val isBorderlineSuggestiveOrUncertain =
-            v.predictedCategory == ContentCategory.SUGGESTIVE.name ||
-                v.predictedCategory == ContentCategory.UNCERTAIN.name
-        val hasLowExplicitSignal =
-            v.pornScore < 0.25f &&
-                v.hentaiScore < 0.25f &&
-                v.maxRoiPornScore < 0.30f &&
-                (!v.stage2Triggered || v.stage2NsfwScore < 0.55f)
-        val hasBenignContext =
-            c.available &&
-                (c.benignNonSexualVisualContext || c.benignDialogueOrEducationalContext) &&
-                c.hardcoreKeywordScore < 0.35f
-
-        if (isBorderlineSuggestiveOrUncertain && hasLowExplicitSignal && hasBenignContext) {
+        // 1a. Talking-Head / Close-Up Portrait Veto (ML Kit Face Detection):
+        // If a large face dominates the frame (vlog, WhatsApp/TikTok talking head, video call)
+        // and explicit porn/Stage-2 scores are not overwhelmingly explicit (< 0.78), suppress false
+        // skin/camisole/dark-room nudity alarms.
+        val isOverwhelminglyExplicit =
+            v.pornScore >= 0.78f && (!v.stage2Triggered || v.stage2NsfwScore >= 0.78f)
+        if (ctx.executed && ctx.isTalkingHeadPortrait && !isOverwhelminglyExplicit && !ctx.isBentOverOrRearFacingPose) {
             val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
             return FusedMultimodalDecision(
                 finalCategory = ContentCategory.NON_EXPLICIT.name,
-                finalConfidence = maxOf(v.neutralScore + v.drawingsScore, 0.80f).coerceIn(0f, 1f),
+                finalConfidence = maxOf(v.neutralScore + v.drawingsScore, 0.85f).coerceIn(0f, 1f),
                 shouldIntervene = false,
                 primaryModality = "VISUAL",
-                corroboratingModalities = listOf("BENIGN_CONTEXT_VETO"),
+                corroboratingModalities = listOf("TALKING_HEAD_FACE_VETO"),
                 uncertaintyPreserved = false,
                 dialogueOnlySuppressed = true,
-                fusionExplanation = "Benign non-sexual context veto applied to borderline ${v.predictedCategory} frame (porn=${"%.2f".format(v.pornScore)}, sexy=${"%.2f".format(v.sexyScore)})",
+                fusionExplanation = "Talking-head portrait veto applied (faceArea=${"%.1f".format(ctx.largestFaceAreaRatio * 100)}%, porn=${"%.2f".format(v.pornScore)})",
+                decisionDurationMs = dur
+            )
+        }
+
+        // 1b. Benign Non-Sexual Context Veto (Accessibility + ML Kit OCR + On-Device NLP):
+        // Dampens borderline SUGGESTIVE / UNCERTAIN / low-porn frames when NLP or caption context
+        // clearly identifies non-sexual content (tailoring, gym, MMA, medical, parenting, faith).
+        val isBorderlineCategory =
+            v.predictedCategory == ContentCategory.SUGGESTIVE.name ||
+                v.predictedCategory == ContentCategory.UNCERTAIN.name ||
+                (v.predictedCategory == ContentCategory.SEXUAL_ACTIVITY.name && v.pornScore < 0.30f)
+        val hasLowExplicitSignal =
+            v.pornScore < 0.30f &&
+                v.hentaiScore < 0.25f &&
+                v.maxRoiPornScore < 0.35f &&
+                (!v.stage2Triggered || v.stage2NsfwScore < 0.62f)
+        val nlpSaysNonSexual =
+            ctx.executed && nlp.dominantClass == "NON_SEXUAL" && nlp.nonSexualContextProb >= 0.65f
+        val hasBenignContext =
+            (nlpSaysNonSexual || (c.available && (c.benignNonSexualVisualContext || c.benignDialogueOrEducationalContext))) &&
+                c.hardcoreKeywordScore < 0.35f &&
+                nlp.explicitSexualProb < 0.35f
+
+        if (isBorderlineCategory && hasLowExplicitSignal && hasBenignContext) {
+            val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
+            return FusedMultimodalDecision(
+                finalCategory = ContentCategory.NON_EXPLICIT.name,
+                finalConfidence = maxOf(v.neutralScore + v.drawingsScore, 0.82f).coerceIn(0f, 1f),
+                shouldIntervene = false,
+                primaryModality = "VISUAL",
+                corroboratingModalities = listOf("NLP_NON_SEXUAL_VETO"),
+                uncertaintyPreserved = false,
+                dialogueOnlySuppressed = true,
+                fusionExplanation = "Non-sexual NLP/context veto applied to ${v.predictedCategory} (nlpSafe=${"%.0f".format(nlp.nonSexualContextProb * 100)}%, tags=${nlp.matchedContextTags.joinToString(",")})",
+                decisionDurationMs = dur
+            )
+        }
+
+        // 1c. Clothed Twerking / Sexually Suggestive Pose Detection (ML Kit Pose + Visual + NLP):
+        // Catches fully-clothed bent-over / rear-facing / hip-centered suggestive dancing across
+        // our 3-frame (~2.2s) accumulative gate while respecting non-sexual gym/workout contexts.
+        val poseIndicatesSuggestive =
+            ctx.executed &&
+                ctx.clothedSuggestivePoseScore >= 0.50f &&
+                !nlpSaysNonSexual &&
+                !(c.available && c.benignNonSexualVisualContext) &&
+                (v.sexyScore >= 0.22f || nlp.suggestivePromoProb >= 0.48f || ctx.hipOscillationScore >= 0.35f)
+
+        if (poseIndicatesSuggestive &&
+            (v.predictedCategory == ContentCategory.NON_EXPLICIT.name ||
+                v.predictedCategory == ContentCategory.UNCERTAIN.name ||
+                v.predictedCategory == ContentCategory.SUGGESTIVE.name)
+        ) {
+            corroborating.add("POSE_SUGGESTIVE")
+            if (nlp.suggestivePromoProb >= 0.48f) corroborating.add("NLP_SUGGESTIVE")
+            val combinedPoseConf = maxOf(
+                v.sexyScore,
+                0.55f * ctx.clothedSuggestivePoseScore +
+                    0.25f * maxOf(v.sexyScore, ctx.hipOscillationScore) +
+                    0.20f * nlp.suggestivePromoProb
+            ).coerceIn(0.72f, 0.92f)
+            val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
+            return FusedMultimodalDecision(
+                finalCategory = ContentCategory.SUGGESTIVE.name,
+                finalConfidence = combinedPoseConf,
+                shouldIntervene = true,
+                primaryModality = "POSE_MULTIMODAL",
+                corroboratingModalities = corroborating,
+                uncertaintyPreserved = false,
+                dialogueOnlySuppressed = false,
+                fusionExplanation = "Clothed suggestive pose corroborated (pose=${"%.2f".format(ctx.clothedSuggestivePoseScore)}, osc=${"%.2f".format(ctx.hipOscillationScore)}, nlpSug=${"%.2f".format(nlp.suggestivePromoProb)})",
                 decisionDurationMs = dur
             )
         }
