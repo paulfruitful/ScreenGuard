@@ -188,21 +188,30 @@ object ScreenTextContextAnalyzer {
     }
 
     /**
-     * Zero-IPC inline event text ingestion (< 0.02 ms).
+     * Zero-IPC inline event text ingestion (< 0.05 ms).
      * Extracts text and contentDescription directly from incoming [android.view.accessibility.AccessibilityEvent]
      * parcels without calling `AccessibilityInteractionClient.waitForResultTimedLocked(5000ms)`.
+     *
+     * Returns the fresh text extracted from THIS event so [ScreenGuardAccessibilityService] can
+     * execute split-second blocking (< 50 ms) on known adult X accounts and priority keywords.
      */
-    fun onAccessibilityEventInline(event: android.view.accessibility.AccessibilityEvent) {
-        if (event.isPassword) return
-        val pkg = event.packageName?.toString() ?: return
-        if (pkg == "com.paulfruitful.screenguard") return
+    fun onAccessibilityEventInline(event: android.view.accessibility.AccessibilityEvent): String {
+        if (event.isPassword) return ""
+        val pkg = event.packageName?.toString() ?: return ""
+        if (pkg == "com.paulfruitful.screenguard") return ""
 
         val startNs = SystemClock.elapsedRealtimeNanos()
+        val freshEventText = StringBuilder(256)
         try {
             if (pkg != rollingPackage) {
                 rollingPackage = pkg
                 rollingTextBuffer = StringBuilder(512)
                 latestSignal = ScreenTextSignal()
+            } else if (event.eventType == android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+                // Keep rolling buffer fresh when user scrolls to a new tweet/post
+                if (rollingTextBuffer.length > 220) {
+                    rollingTextBuffer.delete(0, rollingTextBuffer.length - 120)
+                }
             }
             val sb = rollingTextBuffer
             if (sb.length > 900) {
@@ -214,6 +223,7 @@ object ScreenTextContextAnalyzer {
                 for (t in texts) {
                     if (!t.isNullOrBlank() && t.length <= 240) {
                         sb.append(t).append(' ')
+                        freshEventText.append(t).append(' ')
                         added = true
                     }
                 }
@@ -221,6 +231,7 @@ object ScreenTextContextAnalyzer {
             val desc = event.contentDescription
             if (!desc.isNullOrBlank() && desc.length <= 180) {
                 sb.append(desc).append(' ')
+                freshEventText.append(desc).append(' ')
                 added = true
             }
             if (added) {
@@ -229,6 +240,7 @@ object ScreenTextContextAnalyzer {
             }
         } catch (_: Exception) {
         }
+        return freshEventText.toString().trim()
     }
 
     fun analyzeActiveApplicationWindow(

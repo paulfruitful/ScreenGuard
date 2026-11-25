@@ -22,6 +22,7 @@ import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
 import com.paulfruitful.screenguard.classifier.ContentCategory
 import com.paulfruitful.screenguard.classifier.DetectionEngine
 import com.paulfruitful.screenguard.dns.DnsFilterVpnService
+import com.paulfruitful.screenguard.multimodal.AdultAccountDirectory
 import com.paulfruitful.screenguard.multimodal.AudioPlaybackCapturePrototype
 import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
 import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
@@ -318,8 +319,8 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         val eventPkg = event.packageName?.toString()
         if (!eventPkg.isNullOrBlank() && ActiveWindowResolver.isTransientSystemOverlay(eventPkg)) return
 
-        // Ingest inline event text/captions in < 0.02 ms (zero Binder IPC)
-        ScreenTextContextAnalyzer.onAccessibilityEventInline(event)
+        // Ingest inline event text/captions in < 0.05 ms (zero Binder IPC)
+        val freshInlineText = ScreenTextContextAnalyzer.onAccessibilityEventInline(event)
 
         val prefs = LocalStorage.getPreferences(applicationContext)
         val fastResolved = ActiveWindowResolver.resolveFastFromEventInline(
@@ -384,6 +385,47 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             ActiveWindowResolver.isLauncherPackage(activePkg)
         ) return
         if (prefs.excludedPackages.contains(activePkg)) return
+
+        // SPLIT-SECOND FAST-PATH (< 50 ms):
+        // On X / social media apps, if the incoming AccessibilityEvent's fresh text matches a known
+        // adult account, studio, explicit hashtag (#nsfw), or high-priority keyword (shmood, goons,
+        // chudai, wataa, slut, ebony, freaks, 18+, throat goat, phat ass, nut + emoji, etc.),
+        // raise the protective shield IMMEDIATELY without waiting 1s+ for screenshot capture/ML!
+        if (freshInlineText.isNotBlank() && activePkg in AdultAccountDirectory.SOCIAL_PACKAGES) {
+            val fastMatch = AdultAccountDirectory.inspect(freshInlineText, isSocialApp = true)
+            if (fastMatch.shouldBlockImmediately) {
+                val appLabelSnapshot = currentForegroundAppLabel
+                val winIdSnapshot = currentWindowId
+                serviceScope.launch {
+                    if (!ProtectionCoordinator.isOverlayVisible()) {
+                        val instantResult = ClassificationResult(
+                            scores = mapOf("EXPLICIT" to 0.99f),
+                            predictedCategory = ContentCategory.EXPLICIT.name,
+                            confidence = 0.99f,
+                            pornScore = 0.99f,
+                            explicitScore = 0.99f,
+                            isExplicit = true,
+                            confirmedIntervention = true,
+                            processingDurationMs = 1L,
+                            modelVersion = ProtectionDecisionEngine.DETERMINISTIC_URL_MODEL_VERSION,
+                            successful = true,
+                            packageName = activePkg,
+                            windowId = winIdSnapshot
+                        )
+                        android.util.Log.i(
+                            "SG_PIPELINE",
+                            "SPLIT_SECOND_BLOCK pkg=$activePkg tags=${fastMatch.matchedTags.joinToString(",")}"
+                        )
+                        ProtectionCoordinator.onClassificationResult(
+                            context = applicationContext,
+                            result = instantResult,
+                            appLabel = appLabelSnapshot
+                        )
+                    }
+                }
+                return
+            }
+        }
 
         val settleMs = if (isAppChanged) {
             35L

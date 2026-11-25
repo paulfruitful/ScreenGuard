@@ -1,6 +1,7 @@
 package com.paulfruitful.screenguard.classifier
 
 import com.paulfruitful.screenguard.accessibility.ScreenTextContextAnalyzer
+import com.paulfruitful.screenguard.multimodal.AdultAccountDirectory
 import com.paulfruitful.screenguard.multimodal.AudioPlaybackEvidence
 import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
 import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
@@ -95,7 +96,7 @@ class FalsePositiveAndStrictnessTest {
             "chudai video" to "EXPLICIT_SEXUAL",
             "goonette reversecowgirl" to "EXPLICIT_SEXUAL",
             "doggy and cowgirl" to "EXPLICIT_SEXUAL",
-            "wataa goon 69" to "SUGGESTIVE_PROMO",
+            "wataa goon 69" to "EXPLICIT_SEXUAL",
             "Check out @shmoods #nsfw" to "EXPLICIT_SEXUAL",
             "Follow @abella_danger on X" to "EXPLICIT_SEXUAL",
             "New video from @moodafxxx" to "EXPLICIT_SEXUAL",
@@ -106,6 +107,97 @@ class FalsePositiveAndStrictnessTest {
         }
         assertTrue(OnDeviceNlpContextClassifier.classify("Follow @shmoods").explicitPornDomainDetected)
         assertTrue(OnDeviceNlpContextClassifier.classify("Video #nsfw").dominantClass == "EXPLICIT_SEXUAL")
+    }
+
+    @Test
+    fun splitSecondDirectory_blocksAllPriorityXAccountsAndKeywords_withoutFalsePositives() {
+        val mustBlockImmediately = listOf(
+            "TheLionsDens28 posted a video",
+            "ShmoodNasty @shmoodnasty",
+            "699lbs video",
+            "shmdtv exclusive",
+            "heads and backshots",
+            "deznut",
+            "baddieX",
+            "freaksstown",
+            "ebonyxvids",
+            "callingbooty",
+            "dopeassxxxvids",
+            "freakmajor",
+            "umdavazo",
+            "pozzyanach",
+            "Driler",
+            "WackSackXXX",
+            "snowworshipper",
+            "blackwomenfuck",
+            "thethroatnurse",
+            "throat goat",
+            "toptiertits",
+            "goodgoodgoons",
+            "ebornyporn",
+            "acervodasputas",
+            "Big Thicc",
+            "chopdckkk",
+            "_shmoodtv",
+            "whosbonnieandclyde",
+            "SLUT MAKER",
+            "flix_nut",
+            "NikoNasty",
+            "nuttyvidspage",
+            "Herfave_page",
+            "BaddiesHub",
+            "DrillPink",
+            "shmoodfreakz",
+            "HunnyD",
+            "sluttymommon",
+            "18+ video only",
+            "blackxxfreaks",
+            "EbonyCct",
+            "EbonyLeakz",
+            "Mariannamuse",
+            "AwfulLotta",
+            "willow rider",
+            "princess emily",
+            "troy franciso",
+            "ricky's room",
+            "medusa",
+            "BlowMyfrank",
+            "@CaptionTV",
+            "BigStroke69",
+            "slvttyvisions",
+            "Ebony Light Skin",
+            "toxicbbyonx",
+            "beach sex",
+            "petiteebonyx",
+            "booty clapper 187",
+            "make you nut 💦",
+            "Ms Nasty",
+            "baddiexxx",
+            "wetwrldx",
+            "phat ass",
+            "nutty clips",
+            "fvckingpalace",
+            "VidVaultXShadyTaboo",
+            "she can moan so loud",
+            "BBC and PAWG action"
+        )
+        for (sample in mustBlockImmediately) {
+            val match = AdultAccountDirectory.inspect(sample, isSocialApp = true)
+            assertTrue("Expected split-second block for '$sample'", match.shouldBlockImmediately)
+        }
+
+        // Critical false-positive safety checks (normal news, class, peanut butter, mythology, bible)
+        val mustNotBlock = listOf(
+            "BBC News breaking world report",
+            "I was in class passing notes by the glass window",
+            "Peanut butter and donut recipe in 5 minutes",
+            "Greek mythology statue of Medusa in the museum",
+            "Sunday church sermon and Bible scripture"
+        )
+        for (safe in mustNotBlock) {
+            val match = AdultAccountDirectory.inspect(safe, isSocialApp = true)
+            assertFalse("Must NOT false-positive on '$safe' (tags=${match.matchedTags})", match.shouldBlockImmediately)
+        }
     }
 
     @Test

@@ -12,26 +12,101 @@ object AdultAccountDirectory {
     private val HANDLE_REGEX = Regex("(?:@|(?:x|twitter)\\.com/)([a-z0-9_]{3,32})")
     private val HASHTAG_REGEX = Regex("#([a-z0-9_]{2,32})")
 
+    val SOCIAL_PACKAGES: Set<String> = setOf(
+        "com.twitter.android",
+        "com.zhiliaoapp.musically",
+        "com.ss.android.ugc.trill",
+        "com.instagram.android",
+        "com.facebook.katana",
+        "com.snapchat.android",
+        "com.reddit.frontpage"
+    )
+
+    /** Adult emojis commonly paired with "nut" or suggestive captions on X. */
+    private val ADULT_EMOJIS = listOf("🥜", "💦", "🍆", "🍑", "🥵", "👅", "🔞")
+
+    /** Exemptions so innocent news/education/mythology text never false-positives. */
+    private val BBC_NEWS_EXEMPTIONS = listOf(
+        "bbc news", "bbc sport", "bbc world", "bbc africa", "bbc radio",
+        "bbc earth", "bbc sounds", "bbc weather", "bbc pidgin", "bbc.com", "bbc.co.uk"
+    )
+    private val MEDUSA_SAFE_EXEMPTIONS = listOf(
+        "mythology", "greek", "jellyfish", "museum", "statue", "perseus", "versace"
+    )
+    private val EDUCATIONAL_EXEMPTIONS = listOf(
+        "bible", "scripture", "sermon", "church", "breast cancer", "sex education",
+        "reproductive health", "medical", "biology", "wikipedia", "dictionary"
+    )
+
     /** Explicit hashtags that immediately identify adult / NSFW social posts. */
     val EXPLICIT_HASHTAGS: Set<String> = setOf(
         "nsfw", "nsfwtwt", "nsfwtwitter", "porn", "porno", "porntwt", "xxx", "18plus",
         "onlyfans", "fansly", "nudes", "sendnudes", "hentai", "rule34", "chudai", "desisex",
-        "twerk", "twerking", "thirsttrap", "goon", "gooning", "goonette", "goonfuel",
+        "twerk", "twerking", "thirsttrap", "goon", "goons", "gooning", "goonette", "goonfuel",
         "backshots", "doggy", "doggystyle", "cowgirl", "reversecowgirl", "missionary",
-        "milf", "pawg", "bbc", "horny", "freaky", "lewd", "erotica", "sexting", "camgirl",
-        "adultcontent", "explicitcontent", "spicycontent", "wataa", "nyash", "yansh",
-        "bootyshake", "assshake", "fap", "masturbation", "squirt", "squirting", "blowjob"
+        "milf", "pawg", "bbc", "ebony", "shmood", "slut", "freaks", "horny", "freaky",
+        "lewd", "erotica", "sexting", "camgirl", "adultcontent", "explicitcontent",
+        "spicycontent", "wataa", "nyash", "yansh", "bootyshake", "assshake",
+        "fap", "masturbation", "squirt", "squirting", "blowjob", "throatgoat", "phatass"
     )
 
-    /** Adult studio brands. */
+    /** Adult studio brands & high-priority explicit X account names/phrases (substring matched). */
     val ADULT_BRANDS: List<String> = listOf(
         "chaturbate", "brazzers", "fake hub", "fakehub", "reality kings", "realitykings",
-        "bangbros", "naughty america", "blacked.com", "vixen.com", "tushy.com", "mofos"
+        "bangbros", "naughty america", "blacked.com", "vixen.com", "tushy.com", "mofos",
+        // Major X porn accounts, brands, and performer names (exact identifiers)
+        "thelionsdens28", "shmoodnasty", "699lbs", "shmdtv", "deznut", "baddiex",
+        "freaksstown", "ebonyxvids", "callingbooty", "dopeassxxxvids", "freakmajor",
+        "umdavazo", "pozzyanach", "wacksackxxx", "snowworshipper", "blackwomenfuck",
+        "thethroatnurse", "toptiertits", "goodgoodgoons", "ebornyporn", "acervodasputas",
+        "chopdckkk", "_shmoodtv", "whosbonnieandclyde", "slut maker", "flix_nut",
+        "nikonasty", "nuttyvidspage", "herfave_page", "baddieshub", "drillpink",
+        "shmoodfreakz", "hunnyd", "sluttymommon", "blackxxfreaks", "ebonycct",
+        "ebonyleakz", "mariannamuse", "awfullotta", "blowmyfrank", "captiontv",
+        "bigstroke69", "slvttyvisions", "toxicbbyonx", "petiteebonyx", "baddiexxx",
+        "wetwrldx", "fvckingpalace", "vidvaultxshadytaboo", "vidvaultx", "shadytaboo",
+        // High-priority performer / studio names
+        "willow rider", "princess emily", "troy franciso", "troy francisco",
+        "ricky's room", "rickys room",
+        // High-priority explicit X phrases
+        "heads and backshots", "throat goat", "big thicc", "ebony light skin",
+        "beach sex", "booty clapper 187", "booty clapper", "phat ass", "ms nasty",
+        "18+"
+    )
+
+    /**
+     * Absolute-priority substring roots on X / social apps (any handle or text containing these
+     * triggers split-second blocking, e.g., shmood*, goons*, slut*, slvt*, freaks*, ebony*, fvck*).
+     */
+    private val PRIORITY_SUBSTRINGS_ON_SOCIAL: List<String> = listOf(
+        "shmood", "shmdtv", "goons", "gooning", "goonette", "goonfuel",
+        "slut", "slvt", "freaks", "ebony", "eborny", "pawg", "chudai",
+        "wataa", "pussy", "fvck", "backshots", "doggystyle", "reversecowgirl"
+    )
+
+    /**
+     * Absolute-priority whole-word keywords on X / social apps (strict word boundaries so
+     * "class", "pass", "peanut", "minute", "cockpit" never false-positive).
+     */
+    private val PRIORITY_WHOLE_WORDS_ON_SOCIAL: List<String> = listOf(
+        "goon", "freak", "nutty", "ass", "dick", "cock", "tits", "moan", "moaning",
+        "horny", "doggy", "cowgirl", "missionary", "bbc", "driler", "medusa"
     )
 
     /** Known adult performer & Twitter/X porn aggregator handles (lowercase, without '@'). */
     val BLOCKED_HANDLES: Set<String> = setOf(
-        // Twitter/X porn aggregator accounts
+        // Major X porn accounts & aggregators
+        "thelionsdens28", "shmoodnasty", "699lbs", "shmdtv", "deznut", "baddiex",
+        "freaksstown", "ebonyxvids", "callingbooty", "dopeassxxxvids", "freakmajor",
+        "umdavazo", "pozzyanach", "driler", "wacksackxxx", "snowworshipper",
+        "blackwomenfuck", "thethroatnurse", "toptiertits", "goodgoodgoons",
+        "ebornyporn", "acervodasputas", "chopdckkk", "_shmoodtv", "whosbonnieandclyde",
+        "flix_nut", "nikonasty", "nuttyvidspage", "herfave_page", "baddieshub",
+        "drillpink", "shmoodfreakz", "hunnyd", "sluttymommon", "blackxxfreaks",
+        "ebonycct", "ebonyleakz", "mariannamuse", "awfullotta", "blowmyfrank",
+        "captiontv", "bigstroke69", "slvttyvisions", "toxicbbyonx", "petiteebonyx",
+        "baddiexxx", "wetwrldx", "fvckingpalace", "vidvaultxshadytaboo",
+        "vidvaultx", "shadytaboo",
         "shmoods", "joeexxxx", "nastyaddictive", "shefreakyyasf", "emmanuellustin_",
         "madultmoodz", "teamstee", "thekalirayne", "moodafxxx", "uniquelymade981",
         "stillows_", "olivianomad", "sweetpxrns", "ladyylluscious", "rubyylan",
@@ -165,26 +240,42 @@ object AdultAccountDirectory {
         val matchedAdultAccount: Boolean = false,
         val matchedExplicitHashtag: Boolean = false,
         val matchedAdultBrand: Boolean = false,
+        val matchedPriorityKeyword: Boolean = false,
         val matchedTags: List<String> = emptyList()
-    )
+    ) {
+        val shouldBlockImmediately: Boolean
+            get() = matchedAdultAccount || matchedAdultBrand || matchedExplicitHashtag || matchedPriorityKeyword
+    }
 
-    fun inspect(lowerText: String): DirectoryMatch {
-        if (lowerText.isBlank()) return DirectoryMatch()
+    fun inspect(rawText: String, isSocialApp: Boolean = true): DirectoryMatch {
+        if (rawText.isBlank()) return DirectoryMatch()
+        val lowerText = rawText.lowercase()
         val tags = mutableListOf<String>()
         var accountHit = false
         var hashtagHit = false
         var brandHit = false
+        var priorityHit = false
+
+        val hasEducationalContext = EDUCATIONAL_EXEMPTIONS.any { lowerText.contains(it) }
 
         // 1. Check @handles and x.com/<handle> / twitter.com/<handle>
         for (m in HANDLE_REGEX.findAll(lowerText)) {
             val handle = m.groupValues[1]
-            if (handle in BLOCKED_HANDLES || handle.endsWith("xxx") || handle.startsWith("xxx")) {
+            if (handle in BLOCKED_HANDLES ||
+                handle.endsWith("xxx") ||
+                handle.startsWith("xxx") ||
+                handle.contains("shmood") ||
+                handle.contains("goons") ||
+                handle.contains("ebony") ||
+                handle.contains("slut") ||
+                handle.contains("slvt")
+            ) {
                 accountHit = true
                 if (tags.size < 4) tags.add("acct:@$handle")
             }
         }
 
-        // 2. Check explicit hashtags (#nsfw, #porn, #xxx, #twerk, #goon, etc.)
+        // 2. Check explicit hashtags (#nsfw, #porn, #xxx, #twerk, #goon, #ebony, etc.)
         for (m in HASHTAG_REGEX.findAll(lowerText)) {
             val tag = m.groupValues[1]
             if (tag in EXPLICIT_HASHTAGS) {
@@ -193,11 +284,47 @@ object AdultAccountDirectory {
             }
         }
 
-        // 3. Check known adult studio brands
+        // 3. Check known adult studio brands, X account display names, and explicit phrases
         for (brand in ADULT_BRANDS) {
             if (lowerText.contains(brand)) {
+                // Skip educational articles on generic phrases like "18+" only if clearly medical/bible
+                if (brand == "18+" && hasEducationalContext) continue
                 brandHit = true
                 if (tags.size < 4) tags.add("brand:$brand")
+            }
+        }
+
+        // 4. Split-second high-priority X / social keywords, roots, and "nut" + emoji
+        if (isSocialApp && !hasEducationalContext) {
+            for (root in PRIORITY_SUBSTRINGS_ON_SOCIAL) {
+                if (lowerText.contains(root)) {
+                    priorityHit = true
+                    if (tags.size < 4) tags.add("kw:$root")
+                }
+            }
+
+            val isBbcNews = BBC_NEWS_EXEMPTIONS.any { lowerText.contains(it) }
+            val isSafeMedusa = MEDUSA_SAFE_EXEMPTIONS.any { lowerText.contains(it) }
+
+            for (word in PRIORITY_WHOLE_WORDS_ON_SOCIAL) {
+                if (word == "bbc" && isBbcNews) continue
+                if (word == "medusa" && isSafeMedusa) continue
+                if (containsWholeWord(lowerText, word)) {
+                    priorityHit = true
+                    if (tags.size < 4) tags.add("kw:$word")
+                }
+            }
+
+            // "nut" / "nutted" / "nutting" paired with adult emojis (🥜, 💦, 🍆, 🍑, 🥵, 👅, 🔞)
+            val hasAdultEmoji = ADULT_EMOJIS.any { rawText.contains(it) }
+            if (hasAdultEmoji &&
+                (containsWholeWord(lowerText, "nut") ||
+                    containsWholeWord(lowerText, "nuts") ||
+                    lowerText.contains("nutted") ||
+                    lowerText.contains("nutting"))
+            ) {
+                priorityHit = true
+                if (tags.size < 4) tags.add("kw:nut+emoji")
             }
         }
 
@@ -205,7 +332,21 @@ object AdultAccountDirectory {
             matchedAdultAccount = accountHit,
             matchedExplicitHashtag = hashtagHit,
             matchedAdultBrand = brandHit,
+            matchedPriorityKeyword = priorityHit,
             matchedTags = tags
         )
+    }
+
+    private fun containsWholeWord(haystack: String, needle: String): Boolean {
+        var fromIndex = 0
+        while (true) {
+            val idx = haystack.indexOf(needle, fromIndex)
+            if (idx < 0) return false
+            val beforeOk = idx == 0 || !haystack[idx - 1].isLetterOrDigit()
+            val afterIdx = idx + needle.length
+            val afterOk = afterIdx >= haystack.length || !haystack[afterIdx].isLetterOrDigit()
+            if (beforeOk && afterOk) return true
+            fromIndex = idx + 1
+        }
     }
 }

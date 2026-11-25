@@ -232,16 +232,15 @@ object OnDeviceNlpContextClassifier {
             }
         }
 
-        // Check known adult social handles (@abella_danger, @shmoods, @*xxx), explicit hashtags (#nsfw), and adult studios
-        val directoryMatch = AdultAccountDirectory.inspect(lower)
-        if (directoryMatch.matchedAdultAccount || directoryMatch.matchedExplicitHashtag || directoryMatch.matchedAdultBrand) {
+        // Check known adult social handles, priority X accounts/keywords, explicit hashtags (#nsfw), and adult studios
+        val directoryMatch = AdultAccountDirectory.inspect(rawText, isSocialApp = true)
+        if (directoryMatch.shouldBlockImmediately) {
             matched.addAll(directoryMatch.matchedTags)
         }
-        val isDeterministicAdultSource = isPornDomain || directoryMatch.matchedAdultAccount || directoryMatch.matchedAdultBrand
+        val isDeterministicAdultSource = isPornDomain || directoryMatch.shouldBlockImmediately
 
         var explicitLogit = when {
             isDeterministicAdultSource -> 4.2f
-            directoryMatch.matchedExplicitHashtag -> 3.0f
             else -> -1.4f
         }
         var suggestiveLogit = -1.1f
