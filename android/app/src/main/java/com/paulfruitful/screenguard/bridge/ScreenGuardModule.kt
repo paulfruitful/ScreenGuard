@@ -48,12 +48,14 @@ import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.AppCompatibilityEntry
 import com.paulfruitful.screenguard.storage.LocalStorage
 import com.paulfruitful.screenguard.storage.UserPreferencesData
+import com.paulfruitful.screenguard.update.AppUpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ScreenGuardModule(
     private val reactContext: ReactApplicationContext
@@ -622,6 +624,80 @@ class ScreenGuardModule(
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERR_CLEAR_LOGS", e.message, e)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // In-App GitHub Releases OTA Updater
+    // ---------------------------------------------------------------------
+
+    @ReactMethod
+    fun checkForAppUpdate(promise: Promise) {
+        moduleScope.launch {
+            try {
+                val info = withContext(Dispatchers.IO) {
+                    AppUpdateManager.checkForUpdate()
+                }
+                val map = Arguments.createMap().apply {
+                    putString("currentVersion", info.currentVersion)
+                    putString("latestVersion", info.latestVersion)
+                    putBoolean("updateAvailable", info.updateAvailable)
+                    putString("releaseTitle", info.releaseTitle)
+                    putString("releaseNotes", info.releaseNotes)
+                    putString("downloadUrl", info.downloadUrl)
+                    putString("assetName", info.assetName)
+                    putDouble("assetSizeBytes", info.assetSizeBytes.toDouble())
+                    putString("releaseUrl", info.releaseUrl)
+                    putString("publishedAt", info.publishedAt)
+                }
+                promise.resolve(map)
+            } catch (e: Exception) {
+                promise.reject("ERR_UPDATE_CHECK", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun downloadAndInstallUpdate(downloadUrl: String, assetName: String, promise: Promise) {
+        moduleScope.launch {
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    AppUpdateManager.downloadAndInstall(
+                        context = reactContext.applicationContext,
+                        downloadUrl = downloadUrl,
+                        assetName = assetName
+                    ) { pct, downloaded, total ->
+                        EventBridge.emitUpdateDownloadProgress(pct, downloaded, total)
+                    }
+                }
+                val map = Arguments.createMap().apply {
+                    putString("status", outcome.status)
+                    putString("message", outcome.message)
+                    putString("filePath", outcome.filePath)
+                }
+                promise.resolve(map)
+            } catch (e: Exception) {
+                promise.reject("ERR_UPDATE_DOWNLOAD", e.message, e)
+            }
+        }
+    }
+
+    @ReactMethod
+    fun canRequestPackageInstalls(promise: Promise) {
+        try {
+            promise.resolve(AppUpdateManager.canRequestPackageInstalls(reactContext.applicationContext))
+        } catch (e: Exception) {
+            promise.reject("ERR_INSTALL_PERM", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun openInstallUnknownAppsSettings(promise: Promise) {
+        try {
+            AppUpdateManager.openInstallUnknownAppsSettings(reactContext.applicationContext)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_INSTALL_SETTINGS", e.message, e)
         }
     }
 

@@ -13,6 +13,7 @@ import {
   AccountabilityStatus,
   ActivityLogEntry,
   AppCompatibilityRecord,
+  AppUpdateInfo,
   DebounceTestResult,
   DnsFilterConfigInput,
   DnsFilterStatus,
@@ -51,10 +52,20 @@ export function useScreenGuard() {
   const [isCapturingTest, setIsCapturingTest] = useState<boolean>(false);
   const [isRunningEvaluation, setIsRunningEvaluation] =
     useState<boolean>(false);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [isDownloadingUpdate, setIsDownloadingUpdate] =
+    useState<boolean>(false);
+  const [updateDownloadProgress, setUpdateDownloadProgress] =
+    useState<number>(0);
+  const [updateStatusMessage, setUpdateStatusMessage] = useState<string | null>(
+    null,
+  );
   const [lastError, setLastError] = useState<string | null>(null);
 
   const isMountedRef = useRef<boolean>(true);
   const dnsStartupAttemptedRef = useRef<boolean>(false);
+  const updateStartupCheckedRef = useRef<boolean>(false);
 
   const refreshAll = useCallback(async () => {
     if (!ScreenGuardNative.isAvailable()) {
@@ -231,6 +242,10 @@ export function useScreenGuard() {
 
           case 'DNS_FILTER_STATUS_CHANGED':
             setDnsFilterStatus(event.status);
+            break;
+
+          case 'UPDATE_DOWNLOAD_PROGRESS':
+            setUpdateDownloadProgress(event.progressPercent);
             break;
         }
       },
@@ -764,10 +779,96 @@ export function useScreenGuard() {
     [applyDnsFilterResult],
   );
 
+  const checkForAppUpdate = useCallback(async (silent = false) => {
+    if (!ScreenGuardNative.isAvailable()) {
+      return null;
+    }
+    if (!silent) {
+      setIsCheckingUpdate(true);
+      setUpdateStatusMessage(null);
+    }
+    try {
+      const info = await ScreenGuardNative.checkForAppUpdate();
+      if (isMountedRef.current) {
+        setAppUpdate(info);
+        if (!silent) {
+          setUpdateStatusMessage(
+            info.updateAvailable
+              ? `Update v${info.latestVersion} is available.`
+              : `You are on the latest version (v${info.currentVersion}).`,
+          );
+        }
+      }
+      return info;
+    } catch (err: unknown) {
+      if (!silent && isMountedRef.current) {
+        setUpdateStatusMessage(
+          err instanceof Error
+            ? `Update check failed: ${err.message}`
+            : 'Unable to check GitHub Releases right now.',
+        );
+      }
+      return null;
+    } finally {
+      if (!silent && isMountedRef.current) {
+        setIsCheckingUpdate(false);
+      }
+    }
+  }, []);
+
+  const installAppUpdate = useCallback(async () => {
+    if (!appUpdate?.downloadUrl) {
+      return null;
+    }
+    setIsDownloadingUpdate(true);
+    setUpdateDownloadProgress(0);
+    setUpdateStatusMessage(`Downloading Screen Guard v${appUpdate.latestVersion}...`);
+    try {
+      const outcome = await ScreenGuardNative.downloadAndInstallUpdate(
+        appUpdate.downloadUrl,
+        appUpdate.assetName || `ScreenGuard-v${appUpdate.latestVersion}.apk`,
+      );
+      if (isMountedRef.current) {
+        setUpdateStatusMessage(outcome.message);
+      }
+      return outcome;
+    } catch (err: unknown) {
+      if (isMountedRef.current) {
+        setUpdateStatusMessage(
+          err instanceof Error
+            ? `Download failed: ${err.message}`
+            : 'Failed to download update APK.',
+        );
+      }
+      return null;
+    } finally {
+      if (isMountedRef.current) {
+        setIsDownloadingUpdate(false);
+      }
+    }
+  }, [appUpdate]);
+
+  // Automatically check GitHub Releases once on app startup
+  useEffect(() => {
+    if (updateStartupCheckedRef.current) {
+      return;
+    }
+    updateStartupCheckedRef.current = true;
+    const timer = setTimeout(() => {
+      void checkForAppUpdate(true);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checkForAppUpdate]);
+
   return {
     status,
     accountability,
     dnsFilterStatus,
+    appUpdate,
+    isCheckingUpdate,
+    isDownloadingUpdate,
+    updateDownloadProgress,
+    updateStatusMessage,
     preferences,
     activityLogs,
     compatibilityRecords,
@@ -810,5 +911,7 @@ export function useScreenGuard() {
     startDnsFilter,
     stopDnsFilter,
     updateDnsFilterConfig,
+    checkForAppUpdate,
+    installAppUpdate,
   };
 }

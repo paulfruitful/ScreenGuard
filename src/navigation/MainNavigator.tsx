@@ -48,6 +48,11 @@ export function MainNavigator() {
     status,
     accountability,
     dnsFilterStatus,
+    appUpdate,
+    isCheckingUpdate,
+    isDownloadingUpdate,
+    updateDownloadProgress,
+    updateStatusMessage,
     preferences,
     activityLogs,
     compatibilityRecords,
@@ -82,6 +87,8 @@ export function MainNavigator() {
     startDnsFilter,
     stopDnsFilter,
     updateDnsFilterConfig,
+    checkForAppUpdate,
+    installAppUpdate,
   } = useScreenGuard();
 
   useEffect(() => {
@@ -168,6 +175,11 @@ export function MainNavigator() {
               status={status}
               accountability={accountability}
               dnsFilterStatus={dnsFilterStatus}
+              appUpdate={appUpdate}
+              isDownloadingUpdate={isDownloadingUpdate}
+              updateDownloadProgress={updateDownloadProgress}
+              updateStatusMessage={updateStatusMessage}
+              onInstallAppUpdate={installAppUpdate}
               preferences={preferences}
               activityLogs={activityLogs}
               onOpenAccessibilitySettings={openAccessibilitySettings}
@@ -233,6 +245,13 @@ export function MainNavigator() {
             <SettingsScreen
               preferences={preferences}
               protectionLocked={accountability.active}
+              appUpdate={appUpdate}
+              isCheckingUpdate={isCheckingUpdate}
+              isDownloadingUpdate={isDownloadingUpdate}
+              updateDownloadProgress={updateDownloadProgress}
+              updateStatusMessage={updateStatusMessage}
+              onCheckForUpdate={() => void checkForAppUpdate(false)}
+              onInstallUpdate={() => void installAppUpdate()}
               onUpdatePreferences={updatePreferences}
               onToggleProtection={toggleProtection}
               onOpenAccessibilitySettings={openAccessibilitySettings}

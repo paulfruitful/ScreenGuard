@@ -90,7 +90,33 @@ export interface ClassificationResult {
   timestamp: number;
 }
 
+export interface AppUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseTitle: string;
+  releaseNotes: string;
+  downloadUrl: string;
+  assetName: string;
+  assetSizeBytes: number;
+  releaseUrl: string;
+  publishedAt: string;
+}
+
+export interface UpdateInstallOutcome {
+  status: 'INSTALLER_LAUNCHED' | 'NEEDS_INSTALL_PERMISSION' | string;
+  message: string;
+  filePath: string;
+}
+
 export type ScreenGuardEvent =
+  | {
+      type: 'UPDATE_DOWNLOAD_PROGRESS';
+      progressPercent: number;
+      downloadedBytes: number;
+      totalBytes: number;
+      timestamp?: number;
+    }
   | {
       type: 'SERVICE_STATUS';
       enabled: boolean;

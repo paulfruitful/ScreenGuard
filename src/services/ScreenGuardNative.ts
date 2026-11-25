@@ -9,6 +9,7 @@ import {
   AccountabilityStatus,
   ActivityLogEntry,
   AppCompatibilityRecord,
+  AppUpdateInfo,
   DebounceTestResult,
   DebugPreviewResponse,
   DnsFilterConfigInput,
@@ -22,6 +23,7 @@ import {
   ProtectionActivitySummary,
   ScreenGuardEvent,
   SingleSampleEvalResult,
+  UpdateInstallOutcome,
   UserPreferences,
 } from '../types/screenguard';
 
@@ -84,6 +86,13 @@ interface ScreenGuardNativeModuleSpec {
   startDnsFilter(): Promise<DnsFilterStatus>;
   stopDnsFilter(): Promise<DnsFilterStatus>;
   updateDnsFilterConfig(configJson: string): Promise<DnsFilterStatus>;
+  checkForAppUpdate(): Promise<AppUpdateInfo>;
+  downloadAndInstallUpdate(
+    downloadUrl: string,
+    assetName: string,
+  ): Promise<UpdateInstallOutcome>;
+  canRequestPackageInstalls(): Promise<boolean>;
+  openInstallUnknownAppsSettings(): Promise<boolean>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 }
@@ -624,6 +633,29 @@ export const ScreenGuardNative = {
   ): Promise<DnsFilterStatus> {
     const mod = ensureNativeModule();
     return normalizeDnsStatus(await mod.updateDnsFilterConfig(JSON.stringify(config)));
+  },
+
+  async checkForAppUpdate(): Promise<AppUpdateInfo> {
+    const mod = ensureNativeModule();
+    return mod.checkForAppUpdate();
+  },
+
+  async downloadAndInstallUpdate(
+    downloadUrl: string,
+    assetName: string,
+  ): Promise<UpdateInstallOutcome> {
+    const mod = ensureNativeModule();
+    return mod.downloadAndInstallUpdate(downloadUrl, assetName);
+  },
+
+  async canRequestPackageInstalls(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.canRequestPackageInstalls();
+  },
+
+  async openInstallUnknownAppsSettings(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.openInstallUnknownAppsSettings();
   },
 
   subscribeToEvents(listener: (event: ScreenGuardEvent) => void): () => void {

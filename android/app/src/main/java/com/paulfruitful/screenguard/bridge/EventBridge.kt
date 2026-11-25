@@ -138,6 +138,21 @@ object EventBridge {
         emitRaw(payload)
     }
 
+    fun emitUpdateDownloadProgress(
+        progressPercent: Int,
+        downloadedBytes: Long,
+        totalBytes: Long
+    ) {
+        val payload = Arguments.createMap().apply {
+            putString("type", "UPDATE_DOWNLOAD_PROGRESS")
+            putInt("progressPercent", progressPercent)
+            putDouble("downloadedBytes", downloadedBytes.toDouble())
+            putDouble("totalBytes", totalBytes.toDouble())
+            putDouble("timestamp", System.currentTimeMillis().toDouble())
+        }
+        emitRaw(payload)
+    }
+
     fun accountabilityStatusToWritableMap(status: AccountabilityStatus): WritableMap =
         Arguments.createMap().apply {
             putBoolean("active", status.active)

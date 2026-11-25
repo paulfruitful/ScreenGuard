@@ -9,12 +9,19 @@ import {
 } from 'react-native';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
 import {colors, radius, spacing} from '../theme/theme';
-import {UserPreferences} from '../types/screenguard';
+import {AppUpdateInfo, UserPreferences} from '../types/screenguard';
 import {getFriendlyAppName} from '../utils/friendlyFormat';
 
 interface SettingsScreenProps {
   preferences: UserPreferences;
   protectionLocked: boolean;
+  appUpdate: AppUpdateInfo | null;
+  isCheckingUpdate: boolean;
+  isDownloadingUpdate: boolean;
+  updateDownloadProgress: number;
+  updateStatusMessage: string | null;
+  onCheckForUpdate: () => void;
+  onInstallUpdate: () => void;
   onUpdatePreferences: (partial: Partial<UserPreferences>) => Promise<void>;
   onToggleProtection: (enabled: boolean) => void;
   onOpenAccessibilitySettings: () => void;
@@ -28,6 +35,13 @@ interface SettingsScreenProps {
 export function SettingsScreen({
   preferences,
   protectionLocked,
+  appUpdate,
+  isCheckingUpdate,
+  isDownloadingUpdate,
+  updateDownloadProgress,
+  updateStatusMessage,
+  onCheckForUpdate,
+  onInstallUpdate,
   onUpdatePreferences,
   onToggleProtection,
   onOpenAccessibilitySettings,
@@ -162,6 +176,57 @@ export function SettingsScreen({
           </View>
           <Pressable onPress={onNavigateToDnsFilter} style={styles.outlineBtn}>
             <Text style={styles.outlineBtnText}>Open DNS Filter</Text>
+          </Pressable>
+        </View>
+
+        {/* App Updates (GitHub Releases OTA) */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>App Updates</Text>
+          <Text style={styles.cardSub}>
+            Screen Guard checks GitHub Releases automatically for new versions.
+            {appUpdate
+              ? ` Installed: v${appUpdate.currentVersion} · Latest: v${appUpdate.latestVersion}`
+              : ''}
+          </Text>
+          {updateStatusMessage ? (
+            <Text
+              style={[
+                styles.cardSub,
+                {color: colors.royalBlue, fontWeight: '700', marginBottom: spacing.sm},
+              ]}>
+              {updateStatusMessage}
+            </Text>
+          ) : null}
+          {appUpdate?.updateAvailable ? (
+            <Pressable
+              disabled={isDownloadingUpdate}
+              onPress={onInstallUpdate}
+              style={[
+                styles.outlineBtn,
+                {
+                  backgroundColor: colors.royalBlue,
+                  borderColor: colors.royalBlue,
+                  marginBottom: spacing.sm,
+                },
+                isDownloadingUpdate && {opacity: 0.65},
+              ]}>
+              <Text style={[styles.outlineBtnText, {color: '#FFFFFF'}]}>
+                {isDownloadingUpdate
+                  ? `Downloading Update (${updateDownloadProgress}%)...`
+                  : `Download & Update to v${appUpdate.latestVersion}`}
+              </Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            disabled={isCheckingUpdate || isDownloadingUpdate}
+            onPress={onCheckForUpdate}
+            style={[
+              styles.outlineBtn,
+              (isCheckingUpdate || isDownloadingUpdate) && {opacity: 0.6},
+            ]}>
+            <Text style={styles.outlineBtnText}>
+              {isCheckingUpdate ? 'Checking GitHub Releases...' : 'Check for Updates'}
+            </Text>
           </Pressable>
         </View>
 

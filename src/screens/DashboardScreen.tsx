@@ -22,6 +22,7 @@ import {colors, radius, spacing} from '../theme/theme';
 import {
   AccountabilityStatus,
   ActivityLogEntry,
+  AppUpdateInfo,
   DnsFilterStatus,
   MonitoringStatus,
   UserPreferences,
@@ -32,6 +33,11 @@ interface DashboardScreenProps {
   status: MonitoringStatus;
   accountability: AccountabilityStatus;
   dnsFilterStatus: DnsFilterStatus;
+  appUpdate: AppUpdateInfo | null;
+  isDownloadingUpdate: boolean;
+  updateDownloadProgress: number;
+  updateStatusMessage: string | null;
+  onInstallAppUpdate: () => Promise<unknown>;
   preferences: UserPreferences;
   activityLogs: ActivityLogEntry[];
   onOpenAccessibilitySettings: () => void;
@@ -47,6 +53,11 @@ export function DashboardScreen({
   status,
   accountability,
   dnsFilterStatus,
+  appUpdate,
+  isDownloadingUpdate,
+  updateDownloadProgress,
+  updateStatusMessage,
+  onInstallAppUpdate,
   preferences,
   activityLogs,
   onOpenAccessibilitySettings,
@@ -282,6 +293,46 @@ export function DashboardScreen({
           </Pressable>
         )}
       </View>
+
+      {/* OTA Update Banner when a newer GitHub Release is available */}
+      {appUpdate?.updateAvailable ? (
+        <View style={styles.updateBanner}>
+          <View style={styles.updateBannerHeader}>
+            <Text style={styles.updateBannerTitle}>
+              Update Available · v{appUpdate.latestVersion}
+            </Text>
+            <Text style={styles.updateBannerSub}>
+              Installed: v{appUpdate.currentVersion}
+            </Text>
+          </View>
+          {updateStatusMessage ? (
+            <Text style={styles.updateStatusText}>{updateStatusMessage}</Text>
+          ) : null}
+          {isDownloadingUpdate ? (
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {width: `${Math.min(100, Math.max(4, updateDownloadProgress))}%`},
+                ]}
+              />
+            </View>
+          ) : null}
+          <Pressable
+            disabled={isDownloadingUpdate}
+            onPress={() => void onInstallAppUpdate()}
+            style={[
+              styles.updateButton,
+              isDownloadingUpdate && {opacity: 0.65},
+            ]}>
+            <Text style={styles.updateButtonText}>
+              {isDownloadingUpdate
+                ? `Downloading (${updateDownloadProgress}%)...`
+                : `Download & Update to v${appUpdate.latestVersion}`}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* 3-Column White Stats Card */}
       <View style={styles.statsCard}>
@@ -562,5 +613,59 @@ const styles = StyleSheet.create({
   modeFooterHighlight: {
     color: colors.gold,
     fontWeight: '700',
+  },
+  updateBanner: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: radius.xl,
+    padding: spacing.lg,
+    marginBottom: spacing.md + 2,
+    borderWidth: 1.5,
+    borderColor: colors.gold,
+    elevation: 4,
+  },
+  updateBannerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  updateBannerTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.royalBlue,
+  },
+  updateBannerSub: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  updateStatusText: {
+    fontSize: 12.5,
+    color: colors.textSecondary,
+    marginBottom: spacing.sm,
+  },
+  progressTrack: {
+    height: 7,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceSubtle,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: colors.royalBlue,
+    borderRadius: radius.pill,
+  },
+  updateButton: {
+    backgroundColor: colors.gold,
+    borderRadius: radius.pill,
+    paddingVertical: 11,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  updateButtonText: {
+    color: colors.goldText,
+    fontSize: 13.5,
+    fontWeight: '800',
   },
 });
