@@ -130,11 +130,16 @@ jobs:
           fi
 
       - name: Update landing-page repo download link
-        if: ${{ inputs.prerelease != true && secrets.LANDING_PAGE_TOKEN != '' }}
+        if: ${{ inputs.prerelease != true }}
         env:
           LANDING_TOKEN: ${{ secrets.LANDING_PAGE_TOKEN }}
         shell: bash
         run: |
+          if [ -z "${LANDING_TOKEN}" ]; then
+            echo "LANDING_PAGE_TOKEN secret not set; skipping static landing-page commit (script.js still auto-syncs live)."
+            exit 0
+          fi
+
           TAG="${{ steps.meta.outputs.tag }}"
           APK="${{ steps.meta.outputs.apk_name }}"
           APK_URL="https://github.com/paulfruitful/ScreenGuard/releases/download/${TAG}/${APK}"
