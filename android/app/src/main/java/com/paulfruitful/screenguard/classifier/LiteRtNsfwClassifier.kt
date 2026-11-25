@@ -525,13 +525,26 @@ class LiteRtNsfwClassifier(
                         gammaS1 to PreprocessingMode.GAMMA_CORRECTION
                     }
 
-                    // Noise-artifact guard: Only adopt enhanced Stage 1 scores if the original
-                    // unenhanced frame had baseline non-zero sexual signal OR the enhanced frame
-                    // shows strong structural confidence (> 0.25 porn+sexy) confirmed by Stage 2.
+                    // Noise-artifact guard: Never let CLAHE/Gamma hallucinate explicit content on
+                    // overwhelmingly safe dark scenes (e.g. dim-room talking-head face close-ups
+                    // where origS1 is >= 72% neutral/safe with near-zero sexy).
+                    val origSafe = origS1.neutral + origS1.drawings
                     val origSignal = origS1.porn + origS1.sexy + origS1.hentai
                     val enhSignal = bestEnhanced.first.porn + bestEnhanced.first.sexy
-                    if (origSignal >= 0.015f && enhSignal > (origSignal + 0.04f)) {
-                        effectiveS1 = bestEnhanced.first
+                    val origIsOverwhelminglySafe =
+                        origSafe >= 0.72f && origS1.porn < 0.15f && origS1.sexy < 0.04f
+                    if (!origIsOverwhelminglySafe && origSignal >= 0.08f && enhSignal > (origSignal + 0.06f)) {
+                        // Blend rather than blindly replacing so CLAHE skin-contrast noise cannot
+                        // spike a low-confidence frame straight to 0.90+.
+                        val enh = bestEnhanced.first
+                        effectiveS1 = origS1.copy(
+                            drawings = 0.5f * origS1.drawings + 0.5f * enh.drawings,
+                            hentai = 0.5f * origS1.hentai + 0.5f * enh.hentai,
+                            neutral = 0.5f * origS1.neutral + 0.5f * enh.neutral,
+                            porn = 0.45f * origS1.porn + 0.55f * enh.porn,
+                            sexy = 0.45f * origS1.sexy + 0.55f * enh.sexy,
+                            durationMs = origS1.durationMs + enh.durationMs
+                        )
                         appliedMode = bestEnhanced.second
                     }
                 }
@@ -568,13 +581,14 @@ class LiteRtNsfwClassifier(
                         else -> gammaBmp ?: claheBmp
                     }
                     if (illum.isLowLight && enhTarget != null) {
-                        val s2Enh = secondStageClassifier.classify(enhTarget)
-                        // Conservative blend: weight original 45% + enhanced 55% only if original s2Orig.nsfw >= 0.08
-                        // or origS1 had porn+sexy >= 0.05
-                        if (s2Orig.nsfwScore >= 0.08f || (origS1.porn + origS1.sexy) >= 0.05f) {
+                        val origSafe = origS1.neutral + origS1.drawings
+                        val origIsSafeFaceOrRoom =
+                            origSafe >= 0.72f && origS1.porn < 0.15f && origS1.sexy < 0.04f
+                        if (!origIsSafeFaceOrRoom && (s2Orig.nsfwScore >= 0.18f || (origS1.porn + origS1.sexy) >= 0.12f)) {
+                            val s2Enh = secondStageClassifier.classify(enhTarget)
                             val blendedNsfw = maxOf(
                                 s2Orig.nsfwScore,
-                                0.45f * s2Orig.nsfwScore + 0.55f * s2Enh.nsfwScore
+                                0.55f * s2Orig.nsfwScore + 0.45f * s2Enh.nsfwScore
                             ).coerceIn(0f, 1f)
                             stage2Res = s2Orig.copy(
                                 nsfwScore = blendedNsfw,
@@ -747,15 +761,19 @@ class LiteRtNsfwClassifier(
                 (textSignal.adultScore >= 0.65f && (pPorn + pSexy >= 0.10f || s2Nsfw >= 0.22f)) ||
                 (textSignal.adultScore >= 0.45f && (pPorn >= 0.22f || (pPorn + pSexy) >= 0.32f))
 
-        // Breastfeeding / infant maternal care / musical instrument or bare-arm crop false-positive guard:
-        // When the full-screen unenhanced frame has very low porn (< 0.12) and high neutral (>= 0.72),
-        // AND Stage 2 ResNet-50 is strongly SFW (`s2Nsfw < 0.14`), never trigger a false positive.
+        // Non-sexual close-up face / skin-tone / bare-arm false-positive guard:
+        // When the frame is majority-safe (>= 55% neutral+drawings) with near-zero sexy (< 0.015)
+        // and moderate/low porn (< 0.48), it is a close-up face/portrait or ordinary skin — not nudity.
         val isLikelyNonSexualSkinExposure =
-            (!illum.isLowLight &&
-                pNeutral >= 0.70f &&
-                pSexy < 0.025f &&
-                pPorn < 0.30f &&
-                (!s2Triggered || s2Nsfw < 0.52f)) ||
+            (combinedSafe >= 0.55f &&
+                pSexy < 0.015f &&
+                pPorn < 0.48f &&
+                !hasExplicitTextContext) ||
+                (!illum.isLowLight &&
+                    pNeutral >= 0.70f &&
+                    pSexy < 0.025f &&
+                    pPorn < 0.30f &&
+                    (!s2Triggered || s2Nsfw < 0.52f)) ||
                 (s2Triggered &&
                     s2Nsfw < 0.14f &&
                     origS1.porn < 0.12f &&
@@ -764,13 +782,11 @@ class LiteRtNsfwClassifier(
                     !hasExplicitTextContext)
 
         // Ordinary dark scene false-positive guard:
-        // If the original unenhanced frame had near-zero porn (< 0.025) and near-zero sexy (< 0.04)
-        // and Stage 2 nsfw < 0.38, never classify as sexual even if low-light enhancement lifted background contrast.
         val isOrdinaryDarkScene =
             illum.isLowLight &&
-                origS1.porn < 0.025f &&
+                origS1.porn < 0.10f &&
                 origS1.sexy < 0.045f &&
-                (!s2Triggered || s2Nsfw < 0.38f)
+                (!s2Triggered || s2Nsfw < 0.48f)
 
         val nudityThreshold = (explicitThreshold * 0.58f).coerceIn(0.35f, 0.60f)
 
@@ -831,11 +847,10 @@ class LiteRtNsfwClassifier(
                 ContentCategory.SEXUAL_ACTIVITY to maxOf(sexualActivityScore, s2Nsfw, (pPorn + 0.65f * pSexy).coerceIn(0f, 1f))
             }
 
-            // 3. NUDITY: Visible intimate nudity (either direct high porn score, or low-light / shadowed
-            // nudity where Stage 1 porn >= 0.18 is corroborated by Stage 2 OpenNSFW or enhanced Stage 1)
-            pPorn >= nudityThreshold ||
-                (s2Triggered && pPorn >= 0.20f && s2Nsfw >= 0.42f) ||
-                (illum.isLowLight && pPorn >= 0.18f && (s2Nsfw >= 0.28f || pPorn >= 0.26f)) -> {
+            // 3. NUDITY: Visible intimate nudity (requires real porn evidence and non-majority-safe frame)
+            (pPorn >= nudityThreshold && combinedSafe < 0.58f) ||
+                (s2Triggered && pPorn >= 0.28f && s2Nsfw >= 0.56f && combinedSafe < 0.55f) ||
+                (illum.isLowLight && pPorn >= 0.35f && s2Nsfw >= 0.55f && combinedSafe < 0.50f) -> {
                 ContentCategory.NUDITY to maxOf(pPorn, derivedNudityScore, s2Nsfw)
             }
 
