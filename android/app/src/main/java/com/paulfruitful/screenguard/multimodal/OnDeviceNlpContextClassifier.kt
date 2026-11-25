@@ -232,7 +232,18 @@ object OnDeviceNlpContextClassifier {
             }
         }
 
-        var explicitLogit = if (isPornDomain) 4.0f else -1.4f
+        // Check known adult social handles (@abella_danger, @shmoods, @*xxx), explicit hashtags (#nsfw), and adult studios
+        val directoryMatch = AdultAccountDirectory.inspect(lower)
+        if (directoryMatch.matchedAdultAccount || directoryMatch.matchedExplicitHashtag || directoryMatch.matchedAdultBrand) {
+            matched.addAll(directoryMatch.matchedTags)
+        }
+        val isDeterministicAdultSource = isPornDomain || directoryMatch.matchedAdultAccount || directoryMatch.matchedAdultBrand
+
+        var explicitLogit = when {
+            isDeterministicAdultSource -> 4.2f
+            directoryMatch.matchedExplicitHashtag -> 3.0f
+            else -> -1.4f
+        }
         var suggestiveLogit = -1.1f
         var nonSexualLogit = -0.3f
 
@@ -269,7 +280,7 @@ object OnDeviceNlpContextClassifier {
         val pExp = (eExp / sum).coerceIn(0f, 1f)
 
         val dominant = when {
-            isPornDomain || pExp >= 0.60f -> "EXPLICIT_SEXUAL"
+            isDeterministicAdultSource || pExp >= 0.60f -> "EXPLICIT_SEXUAL"
             pSug >= 0.52f -> "SUGGESTIVE_PROMO"
             pSafe >= 0.65f && matched.any { it.startsWith("safe:") } -> "NON_SEXUAL"
             else -> "NEUTRAL"
@@ -279,7 +290,7 @@ object OnDeviceNlpContextClassifier {
             nonSexualContextProb = pSafe,
             suggestivePromoProb = pSug,
             explicitSexualProb = pExp,
-            explicitPornDomainDetected = isPornDomain,
+            explicitPornDomainDetected = isDeterministicAdultSource,
             dominantClass = dominant,
             matchedContextTags = matched.distinct()
         )

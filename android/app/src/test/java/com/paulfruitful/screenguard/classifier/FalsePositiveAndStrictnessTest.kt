@@ -95,11 +95,17 @@ class FalsePositiveAndStrictnessTest {
             "chudai video" to "EXPLICIT_SEXUAL",
             "goonette reversecowgirl" to "EXPLICIT_SEXUAL",
             "doggy and cowgirl" to "EXPLICIT_SEXUAL",
-            "wataa goon 69" to "SUGGESTIVE_PROMO"
+            "wataa goon 69" to "SUGGESTIVE_PROMO",
+            "Check out @shmoods #nsfw" to "EXPLICIT_SEXUAL",
+            "Follow @abella_danger on X" to "EXPLICIT_SEXUAL",
+            "New video from @moodafxxx" to "EXPLICIT_SEXUAL",
+            "Watch Brazzers exclusive" to "EXPLICIT_SEXUAL"
         )
         for ((sample, expected) in slangBatch) {
             assertEquals("Expected $expected for '$sample'", expected, OnDeviceNlpContextClassifier.classify(sample).dominantClass)
         }
+        assertTrue(OnDeviceNlpContextClassifier.classify("Follow @shmoods").explicitPornDomainDetected)
+        assertTrue(OnDeviceNlpContextClassifier.classify("Video #nsfw").dominantClass == "EXPLICIT_SEXUAL")
     }
 
     @Test
