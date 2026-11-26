@@ -1,4 +1,4 @@
-# Screen Guard v1.4.1 — Release Notes
+# Screen Guard v1.4.2 — Release Notes
 
 **Browse Safe. Live Free.**  
 *Release Date: November 26, 2026 | Platform: Android 11–16*
@@ -7,23 +7,27 @@
 
 ## Overview
 
-Screen Guard v1.4.1 is a focused stability and reliability update that eliminates an Android 16 native crash in ML Kit Pose Detection and adds one-tap Background Autostart guidance for Xiaomi HyperOS / MIUI and OEM devices so the Accessibility Service stays connected.
+Screen Guard v1.4.2 hardens Accessibility Service persistence on Xiaomi HyperOS / MIUI and Android 14–16, adds a protective-shield urgent disconnect alert whenever the phone stops the background service, and puts all keep-alive permissions into a one-tap Home setup checklist.
 
 ---
 
-## What's Fixed in v1.4.1
+## What's New in v1.4.2
 
-### Accessibility Service Stability & Crash Fix
-- **Eliminated Android 16 Native JNI Crash (`SIGABRT`):** Removed the legacy `com.google.mlkit:pose-detection:18.0.0-beta5` (`mediapipe-internal:17.0.0-beta10`) dependency that triggered `NoSuchFieldError` native aborts and inflated process RAM on Android 16 devices.
-- **Lower Background Memory Footprint:** Retaining lightweight ML Kit Face Detection (talking-head portrait veto), ML Kit On-Device OCR + Contextual NLP, LiteRT dual-model visual verification, and the `< 60 ms` split-second X/social media account and keyword blocker without MediaPipe pose overhead.
+### Unbreakable Connection Hardening
+- **Recents Clear-All Protection (`excludeFromRecents`):** Excludes Screen Guard's main window from the Recents task-clear sweep so tapping Clear All (`OneKeyClean`) no longer kills the background Accessibility process.
+- **Co-Resident VPN Watchdog:** Adds a lightweight background watchdog inside the `START_STICKY` DNS Filter VPN service that detects within seconds if Android places the Accessibility Service into a stopped/crashed state.
+- **Strict Event Crash Boundary:** Wraps `onAccessibilityEvent` in a top-level safety guard so unexpected accessibility parcel/node errors can never crash the service.
 
-### Xiaomi HyperOS / OEM Keep-Alive Controls
-- **One-Tap Background Autostart Settings:** Added a direct shortcut on the Home recovery prompt and under **Settings -> Permissions & Privacy -> Background Autostart (Prevent Phone Kill)** so Xiaomi, Redmi, POCO, Oppo, Realme, Vivo, Huawei, and OnePlus users can prevent Recents Clear-All (`OneKeyClean`) from terminating the Accessibility Service.
-- **Clearer Accessibility Reconnect Instructions:** When Android places the service in a stopped state after a system kill, the Home screen now clearly guides users to toggle Screen Guard OFF and back ON in Accessibility Settings and enable Background Autostart.
+### Urgent Protective-Shield Disconnect Alert
+- **Full-Screen Shield Alert:** When protection is enabled and the phone disconnects the Accessibility Service, Screen Guard renders an urgent full-screen alert styled like the protective shield (via system overlay when Display Over Other Apps is granted, plus a high-priority urgent notification and full-screen alert screen) with clear 3-step instructions to toggle Accessibility OFF and back ON.
+- **Instant Auto-Clear:** All urgent alerts and overlays dismiss automatically the moment Accessibility reconnects.
+
+### One-Tap Protection Setup Flow
+- **Home Setup Checklist:** Guides new and returning users through enabling Accessibility Protection, Urgent Shield Alerts (Display Over Other Apps), Battery Saver (No Restrictions), and Xiaomi/OEM Background Autostart in one tap each.
 
 ---
 
 ## Privacy Guarantee
 
-- **100% On-Device Processing:** All fast-path text inspection, ML verification, and DNS filtering happen locally on your device.
-- **Zero Disk Retention:** Screen frames and inline text are evaluated in temporary memory and never stored or uploaded.
+- **100% On-Device Processing:** All detection, fast-path text inspection, and DNS filtering happen locally on your device.
+- **Zero Disk Retention:** Screen frames are evaluated in temporary memory and never stored or uploaded.

@@ -3,6 +3,7 @@ package com.paulfruitful.screenguard.boot
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import com.paulfruitful.screenguard.accessibility.AccessibilityDisconnectAlertManager
 import com.paulfruitful.screenguard.accountability.AccountabilityManager
 import com.paulfruitful.screenguard.dns.DnsFilterVpnService
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
@@ -25,6 +26,9 @@ class AppLifecycleReceiver : BroadcastReceiver() {
             LocalStorage.init(context)
             AccountabilityManager.init(context)
             DnsFilterVpnService.startIfPreparedAndEnabled(context)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                AccessibilityDisconnectAlertManager.checkAndAlertIfDisconnected(context)
+            }, 6_000L)
             val status = AccountabilityManager.getStatus(context)
             val isBoot = intent.action == Intent.ACTION_BOOT_COMPLETED
             LocalStorage.appendActivityLog(

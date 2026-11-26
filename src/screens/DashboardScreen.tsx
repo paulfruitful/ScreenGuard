@@ -17,6 +17,7 @@ import {
   ShieldCheckIcon,
 } from '../components/AppIcons';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
+import {SetupChecklistCard} from '../components/SetupChecklistCard';
 import {UninstallProtectionSummaryCard} from '../components/UninstallProtectionSummaryCard';
 import {colors, radius, spacing} from '../theme/theme';
 import {
@@ -317,6 +318,13 @@ export function DashboardScreen({
           </Pressable>
         )}
       </View>
+
+      {/* One-Tap Protection Setup Flow (Accessibility, Urgent Shield Overlay, Battery, Autostart) */}
+      <SetupChecklistCard
+        status={status}
+        onOpenAccessibilitySettings={onOpenAccessibilitySettings}
+        onRefresh={onRefresh}
+      />
 
       {/* OTA Update Banner when a newer GitHub Release is available */}
       {appUpdate?.updateAvailable ? (

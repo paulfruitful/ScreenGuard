@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import com.paulfruitful.screenguard.MainActivity
+import com.paulfruitful.screenguard.accessibility.AccessibilityDisconnectAlertManager
 import com.paulfruitful.screenguard.accountability.AccountabilityManager
 import com.paulfruitful.screenguard.bridge.EventBridge
 import com.paulfruitful.screenguard.R
@@ -68,6 +69,7 @@ class DnsFilterVpnService : VpnService() {
     private val running = AtomicBoolean(false)
     private var tunnel: ParcelFileDescriptor? = null
     private var worker: Thread? = null
+    private var accessibilityWatchdog: Thread? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -108,6 +110,9 @@ class DnsFilterVpnService : VpnService() {
         // serviceRunning is set only after builder.establish() succeeds.
         if (running.compareAndSet(false, true)) {
             startFilter()
+            startAccessibilityWatchdog()
+        } else {
+            AccessibilityDisconnectAlertManager.checkAndAlertIfDisconnected(applicationContext)
         }
         return START_STICKY
     }
@@ -125,6 +130,8 @@ class DnsFilterVpnService : VpnService() {
 
     private fun stopFilter() {
         running.set(false)
+        accessibilityWatchdog?.interrupt()
+        accessibilityWatchdog = null
         worker?.interrupt()
         worker = null
         try {
@@ -246,6 +253,47 @@ class DnsFilterVpnService : VpnService() {
             "screenguard-dns-filter",
         )
         worker?.start()
+    }
+
+    /**
+     * Co-resident Accessibility watchdog inside the START_STICKY VPN foreground service.
+     * Because Android automatically restarts DnsFilterVpnService after an OEM task-killer
+     * sweep (like Xiaomi HyperOS OneKeyClean), this watchdog detects within seconds when
+     * ScreenGuardAccessibilityService was left in Android's `Crashed services` and raises
+     * the urgent protective-shield reconnect alert.
+     */
+    private fun startAccessibilityWatchdog() {
+        accessibilityWatchdog?.interrupt()
+        accessibilityWatchdog = Thread(
+            {
+                // Brief initial settle so onServiceConnected has time to bind after app update/boot
+                try {
+                    Thread.sleep(4_000L)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                while (running.get()) {
+                    try {
+                        AccessibilityDisconnectAlertManager.checkAndAlertIfDisconnected(
+                            applicationContext
+                        )
+                        Thread.sleep(45_000L)
+                    } catch (_: InterruptedException) {
+                        break
+                    } catch (_: Exception) {
+                        try {
+                            Thread.sleep(45_000L)
+                        } catch (_: InterruptedException) {
+                            break
+                        }
+                    }
+                }
+            },
+            "screenguard-a11y-watchdog"
+        ).apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun createChannel() {

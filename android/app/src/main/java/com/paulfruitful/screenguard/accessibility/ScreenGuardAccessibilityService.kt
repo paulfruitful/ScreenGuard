@@ -222,6 +222,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        AccessibilityDisconnectAlertManager.onServiceReconnected(applicationContext)
         BufferReleaseTracker.onServiceConnected()
         ServiceHealthMonitor.onServiceConnected()
         ProtectionCoordinator.init(applicationContext)
@@ -302,6 +303,15 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        try {
+            handleAccessibilityEventSafe(event)
+        } catch (_: Throwable) {
+            // Strict crash boundary: never allow an unexpected parcel/node error to crash
+            // the AccessibilityService and push it into Android's Crashed services state.
+        }
+    }
+
+    private fun handleAccessibilityEventSafe(event: AccessibilityEvent) {
         val eventReceivedNs = PipelineTelemetry.nowNs()
         ServiceHealthMonitor.onAccessibilityEventReceived()
 
@@ -1007,5 +1017,15 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
             connected = false,
             monitoringActive = false
         )
+
+        // Schedule a quick check after disconnect so if Android/OEM killed the service
+        // while protection was enabled, the urgent protective-shield reconnect alert fires.
+        val appCtx = applicationContext
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            AccessibilityDisconnectAlertManager.checkAndAlertIfDisconnected(
+                context = appCtx,
+                forceImmediate = true
+            )
+        }, 1800L)
     }
 }
