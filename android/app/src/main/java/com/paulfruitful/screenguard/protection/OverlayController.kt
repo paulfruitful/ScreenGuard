@@ -25,6 +25,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
+import com.paulfruitful.screenguard.cooloff.CoolOffOverlayViews
 import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
 
 /**
@@ -32,6 +33,18 @@ import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
  */
 interface OverlayController {
     fun showProtection(reason: ProtectionReason)
+    fun showTakeABreakChooser(
+        closedAppName: String,
+        defaultMinutes: Int,
+        onStartCoolOff: (Int) -> Unit,
+        onSkipBreak: () -> Unit
+    )
+    fun showInOverlayCoolOffSession(
+        durationMinutes: Int?,
+        forceNew: Boolean,
+        onFinishedAndClose: () -> Unit
+    )
+    fun isInInteractiveBreakOrCoolOff(): Boolean
     fun hideProtection()
     fun fadeOutProtection()
     fun setTemporarilyTransparentForProbe(transparent: Boolean)
@@ -75,6 +88,11 @@ class ScreenGuardOverlayController(
     private var activeVerse: MinistryBibleVerse = BibleVerseRepository.pickRandomVerse()
     @Volatile
     private var lastOverlayError: String = "NONE"
+    @Volatile
+    private var inBreakOrCoolOffMode: Boolean = false
+    private var activeCustomChildView: View? = null
+    private var activeInOverlayCoolOff: CoolOffOverlayViews.InOverlayCoolOffController? = null
+    private var mainShieldCardView: LinearLayout? = null
 
     // View references updated in-place to avoid view recreation
     private var stateBadgeText: TextView? = null
@@ -91,10 +109,13 @@ class ScreenGuardOverlayController(
 
     override fun isVisible(): Boolean = isOverlayAttached
 
+    override fun isInInteractiveBreakOrCoolOff(): Boolean = isOverlayAttached && inBreakOrCoolOffMode
+
     override fun getLastError(): String = lastOverlayError
 
     override fun showProtection(reason: ProtectionReason) {
         runOnMain {
+            clearCustomModeLocked()
             currentReason = reason
             if (!isOverlayAttached) {
                 activeVerse = BibleVerseRepository.pickRandomVerse()
@@ -102,11 +123,113 @@ class ScreenGuardOverlayController(
             if (isOverlayAttached && rootOverlayView != null) {
                 rootOverlayView?.animate()?.cancel()
                 rootOverlayView?.alpha = 1f
+                mainShieldCardView?.visibility = View.VISIBLE
                 bindReasonToViews(reason)
                 return@runOnMain
             }
             attachOverlayInternal(reason)
         }
+    }
+
+    override fun showTakeABreakChooser(
+        closedAppName: String,
+        defaultMinutes: Int,
+        onStartCoolOff: (Int) -> Unit,
+        onSkipBreak: () -> Unit
+    ) {
+        runOnMain {
+            ensureRootAttachedForCustomMode()
+            val root = rootOverlayView ?: return@runOnMain
+            clearCustomModeLocked()
+            inBreakOrCoolOffMode = true
+            mainShieldCardView?.visibility = View.GONE
+            val chooser = CoolOffOverlayViews.buildTakeABreakChooserView(
+                context = root.context,
+                closedAppName = closedAppName,
+                initialMinutes = defaultMinutes,
+                onStartCoolOff = onStartCoolOff,
+                onSkipBreak = onSkipBreak
+            )
+            val params = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            ).apply {
+                val m = dpInt(root.context, 24f)
+                setMargins(m, m, m, m)
+            }
+            root.addView(chooser, params)
+            activeCustomChildView = chooser
+            root.animate().cancel()
+            root.alpha = 1f
+        }
+    }
+
+    override fun showInOverlayCoolOffSession(
+        durationMinutes: Int?,
+        forceNew: Boolean,
+        onFinishedAndClose: () -> Unit
+    ) {
+        runOnMain {
+            ensureRootAttachedForCustomMode()
+            val root = rootOverlayView ?: return@runOnMain
+            clearCustomModeLocked()
+            inBreakOrCoolOffMode = true
+            mainShieldCardView?.visibility = View.GONE
+            val controller = CoolOffOverlayViews.InOverlayCoolOffController(
+                context = root.context,
+                durationMinutes = durationMinutes,
+                forceNew = forceNew,
+                onSessionFinishedAndClose = {
+                    clearCustomModeLocked()
+                    detachOverlayInternal()
+                    onFinishedAndClose()
+                }
+            )
+            val coolOffView = controller.buildAndStart()
+            val params = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            ).apply {
+                val m = dpInt(root.context, 20f)
+                setMargins(m, m, m, m)
+            }
+            root.addView(coolOffView, params)
+            activeCustomChildView = coolOffView
+            activeInOverlayCoolOff = controller
+            root.animate().cancel()
+            root.alpha = 1f
+        }
+    }
+
+    private fun ensureRootAttachedForCustomMode() {
+        if (isOverlayAttached && rootOverlayView != null) return
+        val dummyReason = currentReason ?: ProtectionReason(
+            packageName = appContext.packageName,
+            appLabel = "Screen Guard",
+            windowId = -1,
+            triggerCategory = "COOL_OFF",
+            confidence = 1f,
+            smoothedConfidence = 1f,
+            consecutiveConfirmations = 1,
+            requiredConfirmations = 1,
+            sensitivityMode = ProtectionSensitivityMode.STRICT,
+            allowManualDismiss = false,
+            overlayState = OverlayState.PROTECTED
+        )
+        attachOverlayInternal(dummyReason)
+    }
+
+    private fun clearCustomModeLocked() {
+        activeInOverlayCoolOff?.stop()
+        activeInOverlayCoolOff = null
+        activeCustomChildView?.let { child ->
+            (child.parent as? ViewGroup)?.removeView(child)
+        }
+        activeCustomChildView = null
+        inBreakOrCoolOffMode = false
+        mainShieldCardView?.visibility = View.VISIBLE
     }
 
     override fun updateProtection(reason: ProtectionReason) {
@@ -249,6 +372,7 @@ class ScreenGuardOverlayController(
     }
 
     private fun detachOverlayInternal() {
+        clearCustomModeLocked()
         val view = rootOverlayView
         val wm = attachedWindowManager
         if (view != null && wm != null && isOverlayAttached) {
@@ -581,6 +705,7 @@ class ScreenGuardOverlayController(
             val marginH = dpInt(context, 24f)
             setMargins(marginH, marginH, marginH, marginH)
         }
+        mainShieldCardView = card
         root.addView(card, cardParams)
         return root
     }

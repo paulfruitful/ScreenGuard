@@ -1,6 +1,8 @@
 package com.paulfruitful.screenguard.cooloff
 
 import android.app.Activity
+import android.app.ActivityOptions
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Canvas
@@ -9,6 +11,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -41,6 +44,10 @@ class CoolOffActivity : Activity() {
         const val EXTRA_DURATION_MINUTES = "extra_duration_minutes"
         const val EXTRA_FORCE_NEW_SESSION = "extra_force_new_session"
 
+        @Volatile
+        var isCurrentlyForeground: Boolean = false
+            private set
+
         fun launch(
             context: Context,
             durationMinutes: Int? = null,
@@ -48,16 +55,51 @@ class CoolOffActivity : Activity() {
         ) {
             val intent = Intent(context, CoolOffActivity::class.java).apply {
                 if (durationMinutes != null) {
-                    putExtra(EXTRA_DURATION_MINUTES, durationMinutes)
+                    putExtra(EXTRA_DURATION_MINUTES, durationMinutes.coerceIn(1, 60))
                 }
                 putExtra(EXTRA_FORCE_NEW_SESSION, forceNewSession)
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                 )
             }
-            context.startActivity(intent)
+            val optionsBundle = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                try {
+                    ActivityOptions.makeBasic().apply {
+                        pendingIntentBackgroundActivityStartMode =
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    }.toBundle()
+                } catch (_: Throwable) {
+                    null
+                }
+            } else {
+                null
+            }
+            // Prefer PendingIntent with explicit BAL allow options on Android 14+, with direct startActivity fallback
+            var launched = false
+            try {
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                val pi = PendingIntent.getActivity(context, 4901, intent, flags)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE && optionsBundle != null) {
+                    pi.send(context, 0, null, null, null, null, optionsBundle)
+                } else {
+                    pi.send()
+                }
+                launched = true
+            } catch (_: Throwable) {
+            }
+            if (!launched) {
+                try {
+                    if (optionsBundle != null) {
+                        context.startActivity(intent, optionsBundle)
+                    } else {
+                        context.startActivity(intent)
+                    }
+                } catch (_: Throwable) {
+                }
+            }
         }
     }
 
@@ -150,6 +192,7 @@ class CoolOffActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        isCurrentlyForeground = true
         if (!session.isCompleted) {
             baseElapsedSeconds = session.elapsedSeconds
             activeResumedMonoMs = SystemClock.elapsedRealtime()
@@ -166,6 +209,7 @@ class CoolOffActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        isCurrentlyForeground = false
         pauseTimerAndPersist()
         audioEngine.stopImmediately()
     }

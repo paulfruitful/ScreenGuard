@@ -155,9 +155,10 @@ object CoolOffSessionManager {
     ): CoolOffSessionState {
         val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val config = CoolOffConfigStore.load(context)
-        val durationMin = when (requestedDurationMinutes) {
-            1, 3, 5 -> requestedDurationMinutes
-            else -> config.safeDurationMinutes
+        val durationMin = if (requestedDurationMinutes != null && requestedDurationMinutes in 1..60) {
+            requestedDurationMinutes
+        } else {
+            config.safeDurationMinutes
         }
         val rotation = sp.getInt(KEY_ROTATION_COUNTER, 0)
         sp.edit().putInt(KEY_ROTATION_COUNTER, rotation + 1).apply()
