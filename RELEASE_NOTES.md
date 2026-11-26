@@ -1,4 +1,4 @@
-# Screen Guard v1.4.2 — Release Notes
+# Screen Guard v1.5.0 — Release Notes
 
 **Browse Safe. Live Free.**  
 *Release Date: November 26, 2026 | Platform: Android 11–16*
@@ -7,27 +7,32 @@
 
 ## Overview
 
-Screen Guard v1.4.2 hardens Accessibility Service persistence on Xiaomi HyperOS / MIUI and Android 14–16, adds a protective-shield urgent disconnect alert whenever the phone stops the background service, and puts all keep-alive permissions into a one-tap Home setup checklist.
+Screen Guard v1.5.0 delivers three major upgrades: an enhanced on-device visual AI detection engine for clothed suggestive videos and erotic illustrations/animated content, the full Cool-Off Room behavioral self-control system integrated into the Protective Shield, and stronger background Accessibility persistence for Xiaomi HyperOS / MIUI and Android 14–16.
 
 ---
 
-## What's New in v1.4.2
+## What's New in v1.5.0
 
-### Unbreakable Connection Hardening
-- **Recents Clear-All Protection (`excludeFromRecents`):** Excludes Screen Guard's main window from the Recents task-clear sweep so tapping Clear All (`OneKeyClean`) no longer kills the background Accessibility process.
-- **Co-Resident VPN Watchdog:** Adds a lightweight background watchdog inside the `START_STICKY` DNS Filter VPN service that detects within seconds if Android places the Accessibility Service into a stopped/crashed state.
-- **Strict Event Crash Boundary:** Wraps `onAccessibilityEvent` in a top-level safety guard so unexpected accessibility parcel/node errors can never crash the service.
+### Upgraded On-Device Visual AI Detection (~1.1–2.1s)
+- **Clothed Thirst Traps & Twerking Challenges:** Calibrated clean full-media ROI cropping (`0–100% W`, `15–80% H`) and multi-category scoring so clothed sexually suggestive posing and dancing are caught without requiring bare-skin nudity, while keeping ordinary fashion, gym, beach, medical, and portrait content safe.
+- **Explicit Animated Porn, Hentai & Erotic Line Art:** Removed bare-skin Stage 2 vetoes and drawing bypasses on high-confidence hentai and erotic illustrations so explicit anime/cartoon content and illicit drawings are classified accurately while ordinary anime remains allowed.
+- **Faster Temporal Multi-Frame Confirmation:** High-confidence suggestive frames confirm in 2 frames (~1.1s), and moderate suggestive or erotic-drawing frames confirm in 3 frames (~2.1s).
+- **Expanded Multimodal Slang & Caption Fusion:** Added on-device NLP terms for thirst-trap/twerking slang and erotic-art keywords with multimodal confidence fusion.
 
-### Urgent Protective-Shield Disconnect Alert
-- **Full-Screen Shield Alert:** When protection is enabled and the phone disconnects the Accessibility Service, Screen Guard renders an urgent full-screen alert styled like the protective shield (via system overlay when Display Over Other Apps is granted, plus a high-priority urgent notification and full-screen alert screen) with clear 3-step instructions to toggle Accessibility OFF and back ON.
-- **Instant Auto-Clear:** All urgent alerts and overlays dismiss automatically the moment Accessibility reconnects.
+### Cool-Off Room (Behavioral Self-Control)
+- **Protective Shield Integration:** Normal shield activations offer both **Return to Safe Browsing** and **Cool Off**; repeated activations within a rolling time window (default: 3 activations in 3 minutes) automatically escalate to a Cool-Off-required shield until a session is completed.
+- **6 Guided Psychological Exercises:** Box Breathing, Urge Surfing, 5-4-3-2-1 Grounding, Cognitive Reframe, Future-Self Anchor, and Physical Reset — supporting 1-minute, 3-minute (default), and 5-minute sessions.
+- **Offline Scripture & Calming Instrumental Audio:** Built-in KJV scripture meditation with local audio synthesis and playback controls, fully offline and styled in Screen Guard's native design system.
+- **Configurable Settings:** Customize session duration, escalation threshold, detection window, audio defaults, and scripture preferences in Settings.
 
-### One-Tap Protection Setup Flow
-- **Home Setup Checklist:** Guides new and returning users through enabling Accessibility Protection, Urgent Shield Alerts (Display Over Other Apps), Battery Saver (No Restrictions), and Xiaomi/OEM Background Autostart in one tap each.
+### Unbreakable Connection Hardening & Setup Flow
+- **Recents Clear-All Protection (`excludeFromRecents`):** Prevents Clear All (`OneKeyClean`) from terminating the background Accessibility process.
+- **Co-Resident VPN Watchdog:** Detects within seconds if Android stops the Accessibility Service and triggers a protective-shield urgent disconnect alert with 3-step reconnect instructions (auto-clearing the moment Accessibility reconnects).
+- **One-Tap Home Setup Checklist & HyperOS Fix:** Guides users through Accessibility Protection, Urgent Shield Alerts, Battery Saver (No Restrictions), and OEM Background Autostart with accurate Xiaomi HyperOS (`MIUIOP 10008`) status detection.
 
 ---
 
 ## Privacy Guarantee
 
-- **100% On-Device Processing:** All detection, fast-path text inspection, and DNS filtering happen locally on your device.
+- **100% On-Device Processing:** All visual classification, OCR, face verification, text inspection, Cool-Off exercises, and DNS filtering happen locally on your device.
 - **Zero Disk Retention:** Screen frames are evaluated in temporary memory and never stored or uploaded.

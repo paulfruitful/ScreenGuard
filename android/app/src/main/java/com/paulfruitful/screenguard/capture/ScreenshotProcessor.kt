@@ -139,10 +139,10 @@ object ScreenshotProcessor {
                             )
                             BufferReleaseTracker.onBitmapAllocated()
                             val centerSrc = Rect(
-                                (origWidth * 0.03f).toInt(),
-                                (origHeight * 0.16f).toInt(),
-                                (origWidth * 0.97f).toInt(),
-                                (origHeight * 0.78f).toInt()
+                                0,
+                                (origHeight * 0.15f).toInt(),
+                                origWidth,
+                                (origHeight * 0.80f).toInt()
                             )
                             Canvas(centerCrop).drawBitmap(copied, centerSrc, dstRect, scalePaint)
                             centerFeedCropBitmap = centerCrop

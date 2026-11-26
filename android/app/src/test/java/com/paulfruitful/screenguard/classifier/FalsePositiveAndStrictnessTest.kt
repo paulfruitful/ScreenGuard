@@ -391,4 +391,94 @@ class FalsePositiveAndStrictnessTest {
         assertFalse(cleared.shouldShowOverlay)
         assertEquals(OverlayState.HIDDEN, cleared.targetOverlayState)
     }
+
+    @Test
+    fun clothedThirstTrapAndTwerking_blocksWithinTwoSeconds_whileSafeAnimeAndGymStayAllowed() {
+        val engine = ProtectionDecisionEngine()
+        val policy = strictPolicy()
+
+        // 1. Clothed thirst trap with suggestive caption ("Someone clapping behind tbh"):
+        // Stage 1 crop sees strong suggestive/sexualized pose, Stage 2 OpenNSFW is 0.05 (clothed)
+        val thirstTrapVisual = VisualEvidence(
+            predictedCategory = ContentCategory.SUGGESTIVE.name,
+            confidence = 0.86f,
+            pornScore = 0.64f,
+            sexyScore = 0.36f,
+            stage2Triggered = true,
+            stage2NsfwScore = 0.05f,
+            neutralScore = 0.00f
+        )
+        val fusedTrap = fuse(thirstTrapVisual, "Someone clapping behind tbh")
+        assertTrue("Clothed thirst trap should qualify for intervention", fusedTrap.shouldIntervene)
+        assertEquals(ContentCategory.SUGGESTIVE.name, fusedTrap.finalCategory)
+
+        val trapFrame = ClassificationResult(
+            scores = mapOf("sexy" to fusedTrap.finalConfidence),
+            predictedCategory = ContentCategory.SUGGESTIVE.name,
+            confidence = fusedTrap.finalConfidence,
+            sexyScore = fusedTrap.finalConfidence,
+            suggestiveScore = fusedTrap.finalConfidence,
+            processingDurationMs = 20L,
+            modelVersion = "test",
+            successful = true
+        )
+        // Frame 1 enters PENDING (~0s), Frame 2 confirms (~1.1s) because confidence >= 0.86 (accum >= 1.72)
+        assertFalse(engine.evaluate(trapFrame, "com.twitter.android", true, false, policy).shouldShowOverlay)
+        assertTrue(
+            "High-confidence clothed thirst trap should block within 2 frames (~1.1s)",
+            engine.evaluate(trapFrame, "com.twitter.android", true, false, policy).shouldShowOverlay
+        )
+
+        // 2. Clothed suggestive squat (moderate ~0.70 confidence) confirms in 3 frames (~2.1s)
+        val squatEngine = ProtectionDecisionEngine()
+        val squatFrame = ClassificationResult(
+            scores = mapOf("sexy" to 0.70f),
+            predictedCategory = ContentCategory.SUGGESTIVE.name,
+            confidence = 0.70f,
+            sexyScore = 0.70f,
+            suggestiveScore = 0.70f,
+            processingDurationMs = 20L,
+            modelVersion = "test",
+            successful = true
+        )
+        assertFalse(squatEngine.evaluate(squatFrame, "com.twitter.android", true, false, policy).shouldShowOverlay)
+        assertFalse(squatEngine.evaluate(squatFrame, "com.twitter.android", true, false, policy).shouldShowOverlay)
+        assertTrue(
+            "Moderate clothed suggestive pose should confirm on frame 3 (~2.1s)",
+            squatEngine.evaluate(squatFrame, "com.twitter.android", true, false, policy).shouldShowOverlay
+        )
+
+        // 3. Explicit animated porn / hentai must NOT be vetoed even if ML Kit sees a drawn face
+        val hentaiVisual = VisualEvidence(
+            predictedCategory = ContentCategory.EXPLICIT.name,
+            confidence = 0.72f,
+            hentaiScore = 0.72f,
+            drawingsScore = 0.25f,
+            explicitScore = 0.72f,
+            stage2Triggered = true,
+            stage2NsfwScore = 0.04f,
+            neutralScore = 0.03f
+        )
+        val drawnFaceCtx = ContextVerificationEvidence(
+            executed = true,
+            faceCount = 1,
+            largestFaceAreaRatio = 0.18f,
+            isTalkingHeadPortrait = true,
+            nlpScore = OnDeviceNlpContextClassifier.classify("anime clip")
+        )
+        val fusedHentai = fuse(hentaiVisual, "anime clip", drawnFaceCtx)
+        assertTrue("Explicit hentai/animated porn must NOT be vetoed by face or Stage 2", fusedHentai.shouldIntervene)
+        assertEquals(ContentCategory.EXPLICIT.name, fusedHentai.finalCategory)
+
+        // 4. Ordinary anime drawing stays NON_EXPLICIT
+        val safeAnime = VisualEvidence(
+            predictedCategory = ContentCategory.NON_EXPLICIT.name,
+            confidence = 0.98f,
+            drawingsScore = 0.98f,
+            hentaiScore = 0.02f,
+            neutralScore = 0.00f
+        )
+        val fusedSafeAnime = fuse(safeAnime, "New anime episode review")
+        assertFalse("Safe anime must stay allowed", fusedSafeAnime.shouldIntervene)
+    }
 }

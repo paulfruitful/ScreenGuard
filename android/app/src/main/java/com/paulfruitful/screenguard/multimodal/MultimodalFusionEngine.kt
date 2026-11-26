@@ -59,10 +59,11 @@ object MultimodalFusionEngine {
 
         // 1a. Talking-Head / Close-Up Portrait Veto (ML Kit Face Detection):
         // If a large face dominates the frame (vlog, WhatsApp/TikTok talking head, video call)
-        // and explicit porn/Stage-2 scores are not overwhelmingly explicit (< 0.78), suppress false
-        // skin/camisole/dark-room nudity alarms.
+        // and explicit porn/hentai/Stage-2 scores are not overwhelmingly explicit (< 0.78), suppress false
+        // skin/camisole/dark-room nudity alarms. Never veto explicit hentai / animated porn.
         val isOverwhelminglyExplicit =
-            v.pornScore >= 0.78f && (!v.stage2Triggered || v.stage2NsfwScore >= 0.78f)
+            (v.pornScore >= 0.78f && (!v.stage2Triggered || v.stage2NsfwScore >= 0.78f)) ||
+                v.hentaiScore >= 0.58f
         if (ctx.executed && ctx.isTalkingHeadPortrait && !isOverwhelminglyExplicit && !ctx.isBentOverOrRearFacingPose) {
             val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
             return FusedMultimodalDecision(
@@ -208,11 +209,16 @@ object MultimodalFusionEngine {
         }
 
         // 3. Compute correlated text boost (de-duplicated across CaptionNode & OcrFrame)
-        val rawTextBoost = if (c.available && !c.benignDialogueOrEducationalContext && visualHasSexualSignal) {
-            maxOf(c.hardcoreKeywordScore * 0.14f, c.contextualAdultScore * 0.10f, o.visualTextConfidenceBoost)
-                .coerceIn(0f, MAX_TEXT_CORROBORATION_BOOST)
+        val nlpSuggestiveBoost = if (ctx.executed && !nlpSaysNonSexual && visualHasSexualSignal && nlp.suggestivePromoProb >= 0.45f) {
+            (nlp.suggestivePromoProb * 0.14f).coerceIn(0f, MAX_TEXT_CORROBORATION_BOOST)
         } else {
             0f
+        }
+        val rawTextBoost = if (c.available && !c.benignDialogueOrEducationalContext && visualHasSexualSignal) {
+            maxOf(c.hardcoreKeywordScore * 0.14f, c.contextualAdultScore * 0.10f, o.visualTextConfidenceBoost, nlpSuggestiveBoost)
+                .coerceIn(0f, MAX_TEXT_CORROBORATION_BOOST)
+        } else {
+            nlpSuggestiveBoost
         }
         if (rawTextBoost > 0.02f) {
             corroborating.add("CAPTION_TEXT")

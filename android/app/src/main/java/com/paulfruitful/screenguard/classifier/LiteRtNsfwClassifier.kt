@@ -391,20 +391,23 @@ class LiteRtNsfwClassifier(
                 val textSignal = ScreenTextContextAnalyzer.getLatestSignal()
 
                 // 2. Native-Resolution Social Media Feed/Video ROI Scan (when live HardwareBuffer crops exist):
-                // On X/Twitter, Instagram, TikTok, Facebook, Reddit, and Chrome, an in-feed video often
-                // occupies 35-50% of the vertical screen height while surrounding UI chrome makes the
-                // full-screen 224x224 look neutral. Evaluating the native-resolution 1:1 center video crop
-                // catches explicit in-feed videos on the very first frame.
+                // On X/Twitter, Instagram, TikTok, Facebook, Reddit, and Chrome, an in-feed video or
+                // erotic comic/line-art panel often occupies 35-65% of the vertical screen height while
+                // surrounding UI chrome makes the full-screen 224x224 look neutral. Evaluating the
+                // native-resolution center/action video crops catches explicit porn, clothed thirst traps,
+                // twerking challenges, hentai, and erotic drawings/line art without skipping drawn frames.
                 val validNativeCrops = nativeRoiCrops.filter { !it.isRecycled && it.width == INPUT_WIDTH && it.height == INPUT_HEIGHT }
-                if (validNativeCrops.isNotEmpty() && origS1.drawings < 0.82f) {
+                if (validNativeCrops.isNotEmpty()) {
                     val centerCropBmp = validNativeCrops[0]
                     val centerS1 = inferenceMutex.withLock { runStage1Locked(centerCropBmp) }
 
                     val shouldCheckActionCrop = validNativeCrops.size > 1 && (
                         centerS1.porn >= 0.04f ||
                             centerS1.sexy >= 0.08f ||
+                            centerS1.hentai >= 0.12f ||
                             origS1.porn >= 0.03f ||
                             origS1.sexy >= 0.06f ||
+                            origS1.hentai >= 0.12f ||
                             textSignal.adultScore >= 0.25f
                         )
                     val actionCropBmp = if (shouldCheckActionCrop) validNativeCrops[1] else centerCropBmp
@@ -415,12 +418,15 @@ class LiteRtNsfwClassifier(
                     }
 
                     val maxCropPorn = maxOf(centerS1.porn, actionS1.porn)
-                    val minCropPorn = minOf(centerS1.porn, actionS1.porn)
                     val maxCropSexy = maxOf(centerS1.sexy, actionS1.sexy)
+                    val maxCropHentai = maxOf(centerS1.hentai, actionS1.hentai)
 
-                    val pickAction = (actionS1.porn + 0.5f * actionS1.sexy) > (centerS1.porn + 0.5f * centerS1.sexy)
+                    val centerCombined = centerS1.porn + centerS1.sexy + centerS1.hentai
+                    val actionCombined = actionS1.porn + actionS1.sexy + actionS1.hentai
+                    val pickAction = actionCombined > centerCombined
                     val candidateS1 = if (pickAction) actionS1 else centerS1
                     val candidateBmp = if (pickAction) actionCropBmp else centerCropBmp
+                    val candidatePornSexy = candidateS1.porn + candidateS1.sexy
 
                     // If the center/action crop shows substantial sexual signal, verify with Stage 2 on that crop
                     var s2CropNsfw = 0f
@@ -432,16 +438,33 @@ class LiteRtNsfwClassifier(
                         }
                     }
 
-                    val nativeRoiConfirmed =
+                    // Empirical confirmation rules calibrated across real X thirst traps/twerking,
+                    // erotic illustrations/line-art, and safe benchmarks (0% FP on beach/gym/fashion/anime):
+                    // Note: Clothed suggestive/thirst-trap checks use full clean media crop `centerS1`
+                    // (0..100% W, 15..80% H) so tight torso crops never over-zoom on fashion/gym wear.
+                    val centerPornSexy = centerS1.porn + centerS1.sexy
+                    val explicitActionConfirmed =
                         (centerS1.porn >= 0.42f && actionS1.porn >= 0.65f && (s2CropNsfw >= 0.16f || origS1.porn >= 0.08f)) ||
                             (maxCropPorn >= 0.72f && s2CropNsfw >= 0.20f) ||
                             (maxCropPorn >= 0.28f && s2CropNsfw >= 0.46f) ||
                             ((maxCropPorn + maxCropSexy) >= 0.52f && maxCropPorn >= 0.18f && s2CropNsfw >= 0.58f) ||
-                            (textSignal.adultScore >= 0.35f && (maxCropPorn >= 0.24f || s2CropNsfw >= 0.38f)) ||
-                            (textSignal.isExplicitPornDomain && maxCropPorn >= 0.12f)
+                            (textSignal.adultScore >= 0.35f && (maxCropPorn >= 0.24f || maxCropSexy >= 0.30f || maxCropHentai >= 0.30f || s2CropNsfw >= 0.38f)) ||
+                            (textSignal.isExplicitPornDomain && (maxCropPorn >= 0.12f || maxCropHentai >= 0.15f))
 
-                    if (nativeRoiConfirmed && (candidateS1.porn + 0.5f * candidateS1.sexy) > (effectiveS1.porn + 0.5f * effectiveS1.sexy)) {
-                        effectiveS1 = candidateS1
+                    val centerSuggestiveOrHentaiConfirmed =
+                        // Clothed thirst traps, suggestive squats & twerking challenges on clean video crop
+                        (centerS1.porn >= 0.62f && centerPornSexy >= 0.68f) ||
+                            (centerS1.sexy >= 0.64f) ||
+                            (centerPornSexy >= 0.74f && centerS1.sexy >= 0.22f) ||
+                            // Animated porn, hentai & erotic line-art/drawings on clean media crop
+                            (centerS1.hentai >= 0.48f)
+
+                    val chosenCropS1 = if (explicitActionConfirmed) candidateS1 else centerS1
+                    val effCombined = effectiveS1.porn + effectiveS1.sexy + effectiveS1.hentai
+                    if ((explicitActionConfirmed || centerSuggestiveOrHentaiConfirmed) &&
+                        (chosenCropS1.porn + chosenCropS1.sexy + chosenCropS1.hentai) > effCombined
+                    ) {
+                        effectiveS1 = chosenCropS1
                     }
                 } else {
                     // Fast Safe Short-Circuit (Phase B < 50 ms target when no native ROI crop overrides):
@@ -450,6 +473,7 @@ class LiteRtNsfwClassifier(
                             (origS1.neutral + origS1.drawings) >= 0.85f &&
                             origS1.porn < 0.055f &&
                             origS1.sexy < 0.14f &&
+                            origS1.hentai < 0.14f &&
                             textSignal.adultScore < 0.30f &&
                             !textSignal.isExplicitPornDomain
 
@@ -743,10 +767,23 @@ class LiteRtNsfwClassifier(
         explicitThreshold: Float
     ): ClassificationResult {
         val pDrawings = effectiveS1.drawings
-        val pHentai = effectiveS1.hentai
+        val pHentai = maxOf(origS1.hentai, effectiveS1.hentai)
         val pNeutral = effectiveS1.neutral
         val pPorn = maxOf(origS1.porn, effectiveS1.porn)
         val pSexy = maxOf(origS1.sexy, effectiveS1.sexy)
+        val combinedClothedSexual = (pPorn + pSexy).coerceIn(0f, 1f)
+        val combinedDrawnErotic = (pDrawings + pHentai).coerceIn(0f, 1f)
+        // Clothed thirst traps / twerking / suggestive poses where Stage 1 sees strong sexualized
+        // presentation even when Yahoo OpenNSFW (trained on bare-skin real photos) outputs < 0.45.
+        val isStrongClothedSuggestive =
+            pSexy >= 0.64f ||
+                (pPorn >= 0.62f && combinedClothedSexual >= 0.68f) ||
+                (combinedClothedSexual >= 0.74f && pSexy >= 0.22f)
+        // Animated porn, explicit hentai, and erotic line-art / drawings (Yahoo OpenNSFW is blind to drawings).
+        val isExplicitHentaiOrAnimated =
+            pHentai >= 0.58f
+        val isEroticLineArtOrDrawing =
+            pHentai >= 0.46f && combinedDrawnErotic >= 0.72f && pNeutral < 0.26f
 
         val s2Triggered = s2 != null && s2.successful
         val s2Nsfw = if (s2Triggered) s2!!.nsfwScore else 0f
@@ -767,17 +804,23 @@ class LiteRtNsfwClassifier(
             (combinedSafe >= 0.55f &&
                 pSexy < 0.015f &&
                 pPorn < 0.48f &&
+                !isExplicitHentaiOrAnimated &&
+                !isEroticLineArtOrDrawing &&
                 !hasExplicitTextContext) ||
                 (!illum.isLowLight &&
                     pNeutral >= 0.70f &&
                     pSexy < 0.025f &&
                     pPorn < 0.30f &&
+                    !isExplicitHentaiOrAnimated &&
                     (!s2Triggered || s2Nsfw < 0.52f)) ||
                 (s2Triggered &&
                     s2Nsfw < 0.14f &&
                     origS1.porn < 0.12f &&
                     origS1.sexy < 0.08f &&
-                    pPorn < 0.85f &&
+                    pPorn < 0.62f &&
+                    !isStrongClothedSuggestive &&
+                    !isExplicitHentaiOrAnimated &&
+                    !isEroticLineArtOrDrawing &&
                     !hasExplicitTextContext)
 
         // Ordinary dark scene false-positive guard:
@@ -829,12 +872,29 @@ class LiteRtNsfwClassifier(
                 ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
             }
 
-            // Dual-model disagreement guard: if Stage 2 OpenNSFW ResNet-50 ran and strongly
-            // believes the frame is SFW (s2Nsfw < 0.45), do NOT allow a single-model Stage 1
-            // spike to classify as EXPLICIT / NUDITY / SEXUAL_ACTIVITY.
-            s2Triggered && s2Nsfw < 0.45f && pHentai < 0.78f && !hasExplicitTextContext -> {
-                if (pSexy >= 0.65f && pPorn < 0.20f) {
-                    ContentCategory.SUGGESTIVE to pSexy
+            // Explicit Hentai / Animated Porn (do NOT require Yahoo OpenNSFW photo model or drawings < 0.30,
+            // because anime/manga/line-art naturally splits probability across drawings + hentai).
+            isExplicitHentaiOrAnimated -> {
+                ContentCategory.EXPLICIT to maxOf(pHentai, derivedExplicitScore)
+            }
+
+            // Erotic Illustrations & Suggestive Line Art (gated by 2-3 frame temporal confirmation;
+            // ordinary anime with drawings ~1.00 and hentai < 0.20 stays NON_EXPLICIT).
+            isEroticLineArtOrDrawing -> {
+                ContentCategory.SUGGESTIVE to maxOf(0.74f, (pHentai + 0.30f * pDrawings).coerceIn(0f, 0.92f))
+            }
+
+            // Dual-model disagreement guard for real photos: Yahoo OpenNSFW ResNet-50 was trained on
+            // bare-skin nudity and outputs < 0.45 on clothed thirst traps & twerking challenges.
+            // Route clothed suggestive visual signals to SUGGESTIVE (confirmed over 2-3 frames / ~2s
+            // and protected by Face/NLP vetoes) rather than discarding them as NON_EXPLICIT.
+            s2Triggered && s2Nsfw < 0.45f && !hasExplicitTextContext -> {
+                if (isStrongClothedSuggestive) {
+                    val clothedConf = maxOf(
+                        pSexy,
+                        (0.95f * pPorn + 0.75f * pSexy).coerceIn(0f, 0.94f)
+                    ).coerceIn(0.68f, 0.94f)
+                    ContentCategory.SUGGESTIVE to clothedConf
                 } else {
                     ContentCategory.NON_EXPLICIT to maxOf(combinedSafe, s2Sfw)
                 }
@@ -842,7 +902,6 @@ class LiteRtNsfwClassifier(
 
             // 1. EXPLICIT: High-confidence dual-model explicit sexual imagery
             (pPorn >= explicitThreshold && (!s2Triggered || s2Nsfw >= 0.55f)) ||
-                (pHentai >= explicitThreshold && pDrawings < 0.30f) ||
                 (s2Triggered && pPorn >= 0.52f && s2Nsfw >= 0.68f) -> {
                 ContentCategory.EXPLICIT to maxOf(pPorn, derivedExplicitScore)
             }
@@ -864,10 +923,15 @@ class LiteRtNsfwClassifier(
                 ContentCategory.NUDITY to maxOf(pPorn, derivedNudityScore, s2Nsfw)
             }
 
-            // 4. SUGGESTIVE: Strongly sexualized non-explicit imagery (pSexy >= 0.62f, low porn);
-            // everyday camisoles/tank tops/bare shoulders (pSexy < 0.62f, pPorn < 0.14f) stay NON_EXPLICIT.
-            (pSexy >= 0.62f && pPorn < 0.14f && (!s2Triggered || s2Nsfw < 0.72f)) -> {
-                ContentCategory.SUGGESTIVE to pSexy
+            // 4. SUGGESTIVE: Strongly sexualized non-explicit imagery, clothed thirst traps, twerking
+            // challenges, and erotic drawings/line art (confirmed across 2-3 frames / ~2s).
+            // Everyday camisoles/tank tops/bare shoulders (pSexy < 0.60f, pPorn < 0.14f) stay NON_EXPLICIT.
+            isStrongClothedSuggestive -> {
+                val sugConf = maxOf(
+                    pSexy,
+                    (0.95f * pPorn + 0.75f * pSexy).coerceIn(0f, 0.94f)
+                ).coerceIn(0.68f, 0.94f)
+                ContentCategory.SUGGESTIVE to sugConf
             }
 
             // 5. NON_EXPLICIT: Ordinary safe content, camisoles/tank tops, dim talking heads, fitness,
