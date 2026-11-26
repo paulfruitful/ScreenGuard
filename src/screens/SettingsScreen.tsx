@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
+import {ScreenGuardNative} from '../services/ScreenGuardNative';
 import {colors, radius, spacing} from '../theme/theme';
 import {AppUpdateInfo, UserPreferences} from '../types/screenguard';
 import {getFriendlyAppName} from '../utils/friendlyFormat';
@@ -251,6 +252,16 @@ export function SettingsScreen({
             style={[styles.outlineBtn, {marginTop: spacing.sm}]}>
             <Text style={styles.outlineBtnText}>
               Manage Display Over Other Apps
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              ScreenGuardNative.openAutostartSettings().catch(() => {});
+            }}
+            style={[styles.outlineBtn, {marginTop: spacing.sm}]}>
+            <Text style={styles.outlineBtnText}>
+              Background Autostart (Prevent Phone Kill)
             </Text>
           </Pressable>
         </View>

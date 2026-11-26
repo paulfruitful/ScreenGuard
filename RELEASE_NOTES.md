@@ -1,26 +1,25 @@
-# Screen Guard v1.4.0 — Release Notes
+# Screen Guard v1.4.1 — Release Notes
 
 **Browse Safe. Live Free.**  
-*Release Date: November 25, 2026 | Platform: Android 11–16*
+*Release Date: November 26, 2026 | Platform: Android 11–16*
 
 ---
 
 ## Overview
 
-Screen Guard v1.4.0 introduces a **split-second (< 60 ms) inline fast-path** for X (Twitter) and social media feeds, blocking major adult accounts, explicit hashtags, and high-priority NSFW keywords the instant they enter the screen — without waiting for a screenshot or neural network cycle.
+Screen Guard v1.4.1 is a focused stability and reliability update that eliminates an Android 16 native crash in ML Kit Pose Detection and adds one-tap Background Autostart guidance for Xiaomi HyperOS / MIUI and OEM devices so the Accessibility Service stays connected.
 
 ---
 
-## What's New in v1.4.0
+## What's Fixed in v1.4.1
 
-### Split-Second X / Social Media Fast-Path (< 60 ms)
-- **Zero-Wait Inline Shield:** Inspects fresh incoming Accessibility text parcels in `< 0.1 ms` on X, TikTok, Instagram, Facebook, Snapchat, and Reddit and triggers the protective overlay immediately when a blocked adult account or priority keyword appears.
-- **Major X Porn Accounts & Performers Added:** Expanded the on-device directory to **470+ adult accounts, aggregators, and studio names**, including `ShmoodNasty`, `TheLionsDens28`, `goodgoodgoons`, `EbonyCct`, `EbonyLeakz`, `BaddiesHub`, `VidVaultX`, `ShadyTaboo`, `CaptionTV`, `slvttyvisions`, `freaksstown`, `nuttyvidspage`, `Ricky's Room`, `Willow Rider`, `Princess Emily`, and hundreds more.
-- **High-Priority Root & Keyword Rules:** Instant detection for `shmood*`, `goon`/`goons`, `slut`/`slvt`, `freak`/`freaks`, `ebony`, `bbc`, `pawg`, `18+`, `chudai`, `wataa`, `pussy`, `cock`, `dick`, `tits`, `ass`, `phat ass`, `moan`, `horny`, `doggy`, `throat goat`, `heads and backshots`, `nut` + adult emoji, and `#nsfw` hashtags.
-- **Smart False-Positive Exemptions:** Strict word boundaries and context guards ensure innocent terms like `BBC News`, `class`/`pass`/`glass`, `peanut`/`minute`, `Greek mythology Medusa`, and Bible/church content are never mistakenly blocked.
+### Accessibility Service Stability & Crash Fix
+- **Eliminated Android 16 Native JNI Crash (`SIGABRT`):** Removed the legacy `com.google.mlkit:pose-detection:18.0.0-beta5` (`mediapipe-internal:17.0.0-beta10`) dependency that triggered `NoSuchFieldError` native aborts and inflated process RAM on Android 16 devices.
+- **Lower Background Memory Footprint:** Retaining lightweight ML Kit Face Detection (talking-head portrait veto), ML Kit On-Device OCR + Contextual NLP, LiteRT dual-model visual verification, and the `< 60 ms` split-second X/social media account and keyword blocker without MediaPipe pose overhead.
 
-### Multi-Modal Verification & OTA Updates
-- Continues running ML Kit Face Detection (talking-head veto), Pose Detection (clothed twerking guard), On-Device OCR + Contextual NLP, Dual-Model Agreement, 2–3 frame accumulative confirmation, Local DNS Content Filtering, and PIN-locked Uninstall Protection.
+### Xiaomi HyperOS / OEM Keep-Alive Controls
+- **One-Tap Background Autostart Settings:** Added a direct shortcut on the Home recovery prompt and under **Settings -> Permissions & Privacy -> Background Autostart (Prevent Phone Kill)** so Xiaomi, Redmi, POCO, Oppo, Realme, Vivo, Huawei, and OnePlus users can prevent Recents Clear-All (`OneKeyClean`) from terminating the Accessibility Service.
+- **Clearer Accessibility Reconnect Instructions:** When Android places the service in a stopped state after a system kill, the Home screen now clearly guides users to toggle Screen Guard OFF and back ON in Accessibility Settings and enable Background Autostart.
 
 ---
 

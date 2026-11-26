@@ -73,6 +73,7 @@ export function DashboardScreen({
   const serviceActive = permissionGranted && status.serviceConnected;
   const monitoringActive = serviceActive && status.protectionEnabled;
   const batteryOptIgnored = status.batteryOptimizationIgnored !== false;
+  const oemAutostartRecommended = Boolean(status.isOemAutostartRecommended);
 
   const summary = status.protectionSummary;
   const itemsBlocked =
@@ -212,7 +213,7 @@ export function DashboardScreen({
           {!permissionGranted
             ? 'Enable Screen Guard in Accessibility Settings to start blocking inappropriate content automatically.'
             : serviceStoppedBySystem
-            ? 'Xiaomi/Android stopped the background service when the app was closed. Tap below to toggle Screen Guard off and back on in Accessibility.'
+            ? 'Your phone closed Screen Guard in the background (e.g., Clear All). Toggle Screen Guard OFF then back ON in Accessibility Settings, and enable Background Autostart below.'
             : monitoringActive
             ? 'Screen Guard is actively blocking inappropriate content.'
             : 'Tap Resume Protection below whenever you are ready to continue.'}
@@ -289,6 +290,29 @@ export function DashboardScreen({
                 {color: '#FFFFFF', fontSize: 13.5},
               ]}>
               Keep Alive in Background (Disable Battery Kill)
+            </Text>
+          </Pressable>
+        )}
+
+        {oemAutostartRecommended && (serviceStoppedBySystem || !batteryOptIgnored) && (
+          <Pressable
+            onPress={() => {
+              ScreenGuardNative.openAutostartSettings().catch(() => {});
+            }}
+            style={[
+              styles.goldButton,
+              {
+                marginTop: spacing.sm,
+                backgroundColor: 'rgba(255,255,255,0.18)',
+                paddingVertical: 11,
+              },
+            ]}>
+            <Text
+              style={[
+                styles.goldButtonText,
+                {color: '#FFFFFF', fontSize: 13.5},
+              ]}>
+              Enable Background Autostart (Stop Phone Kill)
             </Text>
           </Pressable>
         )}

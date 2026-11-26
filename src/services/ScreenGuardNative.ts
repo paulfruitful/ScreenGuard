@@ -32,6 +32,7 @@ interface ScreenGuardNativeModuleSpec {
   openAccessibilitySettings(): Promise<boolean>;
   isBatteryOptimizationIgnored(): Promise<boolean>;
   requestIgnoreBatteryOptimizations(): Promise<boolean>;
+  openAutostartSettings(): Promise<boolean>;
   canDrawOverlays(): Promise<boolean>;
   openOverlaySettings(): Promise<boolean>;
   getProtectionSummary(): Promise<ProtectionActivitySummary>;
@@ -408,6 +409,11 @@ export const ScreenGuardNative = {
   async requestIgnoreBatteryOptimizations(): Promise<boolean> {
     const mod = ensureNativeModule();
     return mod.requestIgnoreBatteryOptimizations();
+  },
+
+  async openAutostartSettings(): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.openAutostartSettings();
   },
 
   async canDrawOverlays(): Promise<boolean> {

@@ -1,6 +1,7 @@
 package com.paulfruitful.screenguard.bridge
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -214,6 +215,57 @@ class ScreenGuardModule(
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERR_BATTERY_OPT", e.message, e)
+        }
+    }
+
+    private fun isOemAutostartDevice(): Boolean {
+        val m = (Build.MANUFACTURER ?: "").lowercase()
+        val b = (Build.BRAND ?: "").lowercase()
+        return listOf("xiaomi", "redmi", "poco", "oppo", "realme", "vivo", "huawei", "honor", "oneplus", "tecno", "infinix")
+            .any { m.contains(it) || b.contains(it) }
+    }
+
+    @ReactMethod
+    fun openAutostartSettings(promise: Promise) {
+        val candidates = listOf(
+            // Xiaomi / Redmi / POCO (HyperOS & MIUI)
+            ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+            ComponentName("com.miui.securitycenter", "com.miui.powercenter.PowerSettings"),
+            // Oppo / Realme / OnePlus
+            ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
+            ComponentName("com.oplus.battery", "com.oplus.powermanager.fuelgaue.PowerUsageModelActivity"),
+            // Vivo
+            ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity"),
+            ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+            // Huawei / Honor
+            ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")
+        )
+        val pm = reactContext.packageManager
+        for (cn in candidates) {
+            try {
+                val intent = Intent().apply {
+                    component = cn
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                if (pm.resolveActivity(intent, PackageManager.MATCH_DEFAULT_ONLY) != null) {
+                    reactContext.startActivity(intent)
+                    promise.resolve(true)
+                    return
+                }
+            } catch (_: Exception) {
+            }
+        }
+        try {
+            val fallback = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:${reactContext.packageName}")
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            reactContext.startActivity(fallback)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_AUTOSTART_SETTINGS", e.message, e)
         }
     }
 
@@ -1220,6 +1272,7 @@ class ScreenGuardModule(
             putBoolean("accessibilityPermissionGranted", permissionGranted)
             putBoolean("overlayPermissionGranted", overlayPermissionGranted)
             putBoolean("batteryOptimizationIgnored", batteryOptIgnored)
+            putBoolean("isOemAutostartRecommended", isOemAutostartDevice())
             putBoolean("serviceConnected", serviceConnected)
             putBoolean("protectionEnabled", prefs.protectionEnabled)
             putBoolean("monitoringActive", monitoringActive)
