@@ -359,6 +359,7 @@ export interface MonitoringStatus {
   overlayPermissionGranted: boolean;
   batteryOptimizationIgnored?: boolean;
   isOemAutostartRecommended?: boolean;
+  autostartEnabled?: boolean;
   serviceConnected: boolean;
   protectionEnabled: boolean;
   monitoringActive: boolean;

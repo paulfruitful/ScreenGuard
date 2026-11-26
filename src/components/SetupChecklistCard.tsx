@@ -32,6 +32,7 @@ export function SetupChecklistCard({
   const overlayDone = Boolean(status.overlayPermissionGranted);
   const batteryDone = status.batteryOptimizationIgnored === true;
   const showAutostart = Boolean(status.isOemAutostartRecommended);
+  const autostartDone = Boolean(status.autostartEnabled) || autostartTapped;
 
   const steps: SetupStep[] = [
     {
@@ -82,11 +83,13 @@ export function SetupChecklistCard({
       title: 'Background Autostart (Xiaomi / OEM)',
       subtitle:
         'Keeps Screen Guard alive across cleanups and reboots. Toggle Screen Guard ON.',
-      done: autostartTapped,
+      done: autostartDone,
       actionLabel: 'Enable',
       onPress: () => {
         setAutostartTapped(true);
-        ScreenGuardNative.openAutostartSettings().catch(() => {});
+        ScreenGuardNative.openAutostartSettings()
+          .then(() => setTimeout(onRefresh, 800))
+          .catch(() => {});
       },
     });
   }

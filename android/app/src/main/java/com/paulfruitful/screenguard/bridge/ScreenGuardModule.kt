@@ -1,6 +1,7 @@
 package com.paulfruitful.screenguard.bridge
 
 import android.app.Activity
+import android.app.AppOpsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -65,6 +66,10 @@ class ScreenGuardModule(
     companion object {
         private const val REQUEST_CODE_VPN_PERMISSION = 4102
         private const val REQUEST_CODE_DEVICE_ADMIN = 4103
+        private const val OEM_SETUP_PREFS = "screenguard_oem_setup"
+        private const val KEY_BATTERY_CONFIGURED = "oem_battery_configured"
+        private const val KEY_AUTOSTART_CONFIGURED = "oem_autostart_configured"
+        private const val MIUI_OP_AUTO_START = 10008
     }
 
     private val moduleScope = CoroutineScope(Dispatchers.Main.immediate + SupervisorJob())
@@ -174,16 +179,52 @@ class ScreenGuardModule(
         }
     }
 
+    private fun isBatteryOptimizationEffectivelyIgnored(appCtx: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (pm?.isIgnoringBatteryOptimizations(appCtx.packageName) == true) return true
+        // On Xiaomi HyperOS / MIUI, selecting "No restrictions" in Xiaomi's PowerDetailActivity
+        // sets PolicyMaker=NO_RESTRICT_APP without updating AOSP's deviceidle whitelist.
+        if (isOemAutostartDevice()) {
+            val prefs = appCtx.getSharedPreferences(OEM_SETUP_PREFS, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_BATTERY_CONFIGURED, false)) return true
+        }
+        return false
+    }
+
+    private fun isAutostartEffectivelyEnabled(appCtx: Context): Boolean {
+        if (!isOemAutostartDevice()) return true
+        // Query Xiaomi HyperOS/MIUI AppOps OP_AUTO_START (10008) directly when available.
+        try {
+            val appOps = appCtx.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+            if (appOps != null) {
+                val method = AppOpsManager::class.java.getMethod(
+                    "checkOpNoThrow",
+                    Int::class.javaPrimitiveType,
+                    Int::class.javaPrimitiveType,
+                    String::class.java
+                )
+                val mode = method.invoke(
+                    appOps,
+                    MIUI_OP_AUTO_START,
+                    android.os.Process.myUid(),
+                    appCtx.packageName
+                ) as? Int
+                if (mode == AppOpsManager.MODE_ALLOWED) return true
+                if (mode == AppOpsManager.MODE_IGNORED || mode == AppOpsManager.MODE_ERRORED) {
+                    return false
+                }
+            }
+        } catch (_: Exception) {
+        }
+        val prefs = appCtx.getSharedPreferences(OEM_SETUP_PREFS, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_AUTOSTART_CONFIGURED, false)
+    }
+
     @ReactMethod
     fun isBatteryOptimizationIgnored(promise: Promise) {
         try {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-                promise.resolve(true)
-                return
-            }
-            val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
-            val ignored = pm?.isIgnoringBatteryOptimizations(reactContext.packageName) ?: false
-            promise.resolve(ignored)
+            promise.resolve(isBatteryOptimizationEffectivelyIgnored(reactContext.applicationContext))
         } catch (e: Exception) {
             promise.resolve(false)
         }
@@ -192,7 +233,14 @@ class ScreenGuardModule(
     @ReactMethod
     fun requestIgnoreBatteryOptimizations(promise: Promise) {
         try {
+            val appCtx = reactContext.applicationContext
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (isOemAutostartDevice()) {
+                    appCtx.getSharedPreferences(OEM_SETUP_PREFS, Context.MODE_PRIVATE)
+                        .edit()
+                        .putBoolean(KEY_BATTERY_CONFIGURED, true)
+                        .apply()
+                }
                 val pm = reactContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
                 val alreadyIgnored = pm?.isIgnoringBatteryOptimizations(reactContext.packageName) ?: false
                 if (!alreadyIgnored) {
@@ -227,6 +275,11 @@ class ScreenGuardModule(
 
     @ReactMethod
     fun openAutostartSettings(promise: Promise) {
+        reactContext.applicationContext
+            .getSharedPreferences(OEM_SETUP_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_AUTOSTART_CONFIGURED, true)
+            .apply()
         val candidates = listOf(
             // Xiaomi / Redmi / POCO (HyperOS & MIUI)
             ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
@@ -1236,9 +1289,8 @@ class ScreenGuardModule(
             .isAccessibilityServiceEnabledInSettings(appCtx)
         val overlayPermissionGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
             Settings.canDrawOverlays(appCtx)
-        val pm = appCtx.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val batteryOptIgnored = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
-            (pm?.isIgnoringBatteryOptimizations(appCtx.packageName) == true)
+        val batteryOptIgnored = isBatteryOptimizationEffectivelyIgnored(appCtx)
+        val autostartEnabled = isAutostartEffectivelyEnabled(appCtx)
         val serviceConnected = ScreenGuardAccessibilityService.isServiceConnected()
         val monitoringActive = permissionGranted && serviceConnected && prefs.protectionEnabled
         val latestClassification = DetectionEngine.getLatestResult()
@@ -1273,6 +1325,7 @@ class ScreenGuardModule(
             putBoolean("overlayPermissionGranted", overlayPermissionGranted)
             putBoolean("batteryOptimizationIgnored", batteryOptIgnored)
             putBoolean("isOemAutostartRecommended", isOemAutostartDevice())
+            putBoolean("autostartEnabled", autostartEnabled)
             putBoolean("serviceConnected", serviceConnected)
             putBoolean("protectionEnabled", prefs.protectionEnabled)
             putBoolean("monitoringActive", monitoringActive)

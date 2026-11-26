@@ -28,7 +28,6 @@ import {
   MonitoringStatus,
   UserPreferences,
 } from '../types/screenguard';
-import {ScreenGuardNative} from '../services/ScreenGuardNative';
 
 interface DashboardScreenProps {
   status: MonitoringStatus;
@@ -73,8 +72,6 @@ export function DashboardScreen({
   const serviceStoppedBySystem = permissionGranted && !status.serviceConnected;
   const serviceActive = permissionGranted && status.serviceConnected;
   const monitoringActive = serviceActive && status.protectionEnabled;
-  const batteryOptIgnored = status.batteryOptimizationIgnored !== false;
-  const oemAutostartRecommended = Boolean(status.isOemAutostartRecommended);
 
   const summary = status.protectionSummary;
   const itemsBlocked =
@@ -269,54 +266,6 @@ export function DashboardScreen({
             </Text>
           </Pressable>
         )}
-
-        {!batteryOptIgnored && (
-          <Pressable
-            onPress={() => {
-              ScreenGuardNative.requestIgnoreBatteryOptimizations().catch(
-                () => {},
-              );
-            }}
-            style={[
-              styles.goldButton,
-              {
-                marginTop: spacing.sm,
-                backgroundColor: 'rgba(255,255,255,0.16)',
-                paddingVertical: 11,
-              },
-            ]}>
-            <Text
-              style={[
-                styles.goldButtonText,
-                {color: '#FFFFFF', fontSize: 13.5},
-              ]}>
-              Keep Alive in Background (Disable Battery Kill)
-            </Text>
-          </Pressable>
-        )}
-
-        {oemAutostartRecommended && (serviceStoppedBySystem || !batteryOptIgnored) && (
-          <Pressable
-            onPress={() => {
-              ScreenGuardNative.openAutostartSettings().catch(() => {});
-            }}
-            style={[
-              styles.goldButton,
-              {
-                marginTop: spacing.sm,
-                backgroundColor: 'rgba(255,255,255,0.18)',
-                paddingVertical: 11,
-              },
-            ]}>
-            <Text
-              style={[
-                styles.goldButtonText,
-                {color: '#FFFFFF', fontSize: 13.5},
-              ]}>
-              Enable Background Autostart (Stop Phone Kill)
-            </Text>
-          </Pressable>
-        )}
       </View>
 
       {/* One-Tap Protection Setup Flow (Accessibility, Urgent Shield Overlay, Battery, Autostart) */}
@@ -451,7 +400,7 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
+    paddingTop: spacing.md + 4,
     paddingBottom: spacing.xxl + 16,
   },
   topBar: {
