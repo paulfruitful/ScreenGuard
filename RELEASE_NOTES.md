@@ -1,28 +1,22 @@
-# Screen Guard v1.6.2 — Release Notes
+# Screen Guard v1.6.3 — Release Notes
 
 **Browse Safe. Live Free.**  
-*Release Date: November 27, 2026 | Platform: Android 11–16*
+*Release Date: November 27, 2026 | Platform: Android 11–16 (32-bit & 64-bit ARM)*
 
 ---
 
 ## Overview
 
-Screen Guard v1.6.2 fixes **Cool Off** and **Take a Break** shield actions on Android 14–16 and Xiaomi HyperOS so tapping either button cleanly closes the underlying app and reliably guides you into a Cool-Off session or custom break interval.
+Screen Guard v1.6.3 fixes APK installation compatibility across 32-bit and 64-bit Android phones — resolving *"App not installed as app isn't compatible with your phone"* on devices like Samsung Galaxy A13 and *"App not installed as package appears to be invalid"* on Android 14–15 devices like Vivo Y19s.
 
 ---
 
-## What's New in v1.6.2
+## What's New in v1.6.3
 
-### Clean App Exit on Cool Off & Take a Break
-- **Exits Underlying App Immediately:** Replaces `GLOBAL_ACTION_BACK` with `GLOBAL_ACTION_HOME` when **Cool Off**, **Take a Break**, or **Return to Safe Browsing** is tapped so TikTok, Instagram, Facebook, X, or browsers exit immediately and stop video/audio playback.
-- **Preserves Active Break & Cool-Off Flows:** Guards app-switch cleanup so exiting to the launcher never auto-dismisses the Break chooser or Cool-Off session.
-
-### Unbreakable Cool-Off Launch on Xiaomi HyperOS / Android 14–16
-- **Multi-Layer Activity Launch:** Launches `CoolOffActivity` using Android 14+ `PendingIntent` + `ActivityOptions` from the active `AccessibilityService` context while the trusted overlay is still attached.
-- **Automatic In-Overlay Cool-Off Room Fallback:** If an OEM ROM (such as Xiaomi HyperOS `MIUIOP 10021`) blocks background Activity launches, seamlessly runs the full interactive Cool-Off session directly inside the Accessibility Overlay (live countdown timer, exercise instructions, interactive prompts, offline scripture, calming instrumental audio with mute toggle, and full completion state reset).
-
-### Custom Duration "Take a Break" Flow
-- **Any Interval of Your Choosing (1–60 min):** Tapping **Take a Break** on a Doomscroll reminder now closes the social app and opens **"Good call taking a break."** with quick presets (`1m`, `3m`, `5m`, `10m`, `15m`) plus `− / +` buttons to start a Cool-Off session for any custom duration from 1 to 60 minutes, or dismiss cleanly to your Home screen.
+### Universal Device Compatibility (`armeabi-v7a` + `arm64-v8a`)
+- **Added Full 32-Bit ARM (`armeabi-v7a`) Support:** Bundles native libraries for both 32-bit (`armeabi-v7a`) and 64-bit (`arm64-v8a`) Android devices, enabling installation on Samsung Galaxy A13 / A04 / A05, Vivo Y19s / Y17s, Tecno, Infinix, and Redmi A-series phones alongside 64-bit flagships.
+- **Full APK Signature Schemes (v1 + v2 + v3):** Explicitly enables JAR (v1), APK Signature Scheme v2, and APK Signature Scheme v3 signing for broad OEM Package Installer compatibility (Samsung OneUI, Vivo FuntouchOS 15, Xiaomi HyperOS, Oppo ColorOS) while preserving seamless upgrades for existing users.
+- **Removed Emulator-Only `x86_64` Binaries:** Keeps the universal phone APK lean by dropping desktop-emulator-only `x86_64` libraries.
 
 ---
 
