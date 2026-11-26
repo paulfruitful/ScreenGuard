@@ -14,6 +14,8 @@ import com.paulfruitful.screenguard.bridge.EventBridge
 import com.paulfruitful.screenguard.classifier.ClassificationResult
 import com.paulfruitful.screenguard.cooloff.CoolOffActivity
 import com.paulfruitful.screenguard.cooloff.TriggerFrequencyTracker
+import com.paulfruitful.screenguard.doomscroll.BehaviouralProtectionCoordinator
+import com.paulfruitful.screenguard.doomscroll.DoomscrollInterventionLevel
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.LocalStorage
 import com.paulfruitful.screenguard.storage.UserPreferencesData
@@ -51,6 +53,9 @@ object ProtectionCoordinator {
 
     @Volatile
     private var activeConfidence: Float = 0f
+
+    @Volatile
+    private var activeInterventionSource: InterventionSource = InterventionSource.VISUAL_CONTENT
 
     fun isOverlayVisible(): Boolean = overlayController?.isVisible() == true
 
@@ -119,6 +124,7 @@ object ProtectionCoordinator {
             activeProtectedAppLabel = appLabel.ifBlank { pkg }
             activeTriggerCategory = decision.triggerCategory
             activeConfidence = decision.rawConfidence
+            activeInterventionSource = InterventionSource.VISUAL_CONTENT
 
             val frequencyState = if (decision.directive == DecisionDirective.TRIGGER_PROTECTION) {
                 TriggerFrequencyTracker.recordShieldActivation(context)
@@ -126,6 +132,7 @@ object ProtectionCoordinator {
                 TriggerFrequencyTracker.getState(context)
             }
 
+            val blockReasonLabel = formatVisualBlockReason(result, decision)
             val reason = ProtectionReason(
                 packageName = pkg,
                 appLabel = activeProtectedAppLabel,
@@ -139,7 +146,8 @@ object ProtectionCoordinator {
                 allowManualDismiss = policy.allowManualDismiss,
                 overlayState = decision.targetOverlayState,
                 isCoolOffEscalated = frequencyState.isEscalated,
-                recentTriggerCount = frequencyState.recentActivationCount
+                recentTriggerCount = frequencyState.recentActivationCount,
+                customContextMeta = blockReasonLabel
             )
 
             if (decision.directive == DecisionDirective.TRIGGER_PROTECTION) {
@@ -163,7 +171,7 @@ object ProtectionCoordinator {
             } else {
                 overlayController?.updateProtection(reason)
             }
-        } else if (decision.shouldHideOverlay) {
+        } else if (decision.shouldHideOverlay && activeInterventionSource == InterventionSource.VISUAL_CONTENT) {
             if (decision.directive == DecisionDirective.CLEAR_PROTECTION) {
                 overlayController?.fadeOutProtection()
                 LocalStorage.recordAutoRecovery(context)
@@ -497,9 +505,106 @@ object ProtectionCoordinator {
         }
     }
 
+    /**
+     * Shared intervention entry point for the optional Behavioural Protection (Doomscroll) engine.
+     *
+     * Priority & Conflict Rules (Section 10):
+     * - Visual explicit/suggestive protection ALWAYS takes priority; if a visual shield is visible,
+     *   behavioural interventions never overwrite or dismiss it.
+     * - Prevents duplicate overlay launches and never creates a competing overlay surface.
+     */
+    fun requestBehaviouralIntervention(
+        context: Context,
+        packageName: String,
+        appLabel: String,
+        level: DoomscrollInterventionLevel,
+        riskScore: Int,
+        activeDurationMinutes: Int,
+        videoCount: Int,
+        explanation: String
+    ): Boolean {
+        init(context)
+        if (level == DoomscrollInterventionLevel.NONE) return false
+
+        synchronized(lock) {
+            if (overlayController?.isVisible() == true) {
+                // Never interfere with active visual content protection or duplicate an active doomscroll overlay
+                if (activeInterventionSource == InterventionSource.VISUAL_CONTENT) return false
+                if (activeInterventionSource == InterventionSource.DOOMSCROLL_CRITICAL) return false
+                if (activeInterventionSource == InterventionSource.DOOMSCROLL_STRONG &&
+                    level != DoomscrollInterventionLevel.COOL_OFF_CRITICAL
+                ) return false
+                if (activeInterventionSource == InterventionSource.DOOMSCROLL_GENTLE &&
+                    level == DoomscrollInterventionLevel.GENTLE_REMINDER
+                ) return false
+            }
+
+            val source = when (level) {
+                DoomscrollInterventionLevel.GENTLE_REMINDER -> InterventionSource.DOOMSCROLL_GENTLE
+                DoomscrollInterventionLevel.STRONG_INTERVENTION -> InterventionSource.DOOMSCROLL_STRONG
+                DoomscrollInterventionLevel.COOL_OFF_CRITICAL -> InterventionSource.DOOMSCROLL_CRITICAL
+                DoomscrollInterventionLevel.NONE -> return false
+            }
+
+            val friendlyApp = appLabel.ifBlank { packageName }
+            val metaText = buildString {
+                append(friendlyApp)
+                if (activeDurationMinutes > 0) append(" · ${activeDurationMinutes}m scrolling")
+                if (videoCount > 0) append(" · $videoCount videos")
+                append(" · Risk $riskScore/100")
+            }
+
+            val reason = ProtectionReason(
+                packageName = packageName,
+                appLabel = friendlyApp,
+                windowId = ScreenGuardAccessibilityService.currentWindowId,
+                triggerCategory = "DOOMSCROLL_${level.name}",
+                confidence = (riskScore / 100f).coerceIn(0f, 1f),
+                smoothedConfidence = (riskScore / 100f).coerceIn(0f, 1f),
+                consecutiveConfirmations = 1,
+                requiredConfirmations = 1,
+                sensitivityMode = ProtectionSensitivityMode.STRICT,
+                allowManualDismiss = (level == DoomscrollInterventionLevel.GENTLE_REMINDER),
+                overlayState = OverlayState.PROTECTED,
+                isCoolOffEscalated = (level == DoomscrollInterventionLevel.COOL_OFF_CRITICAL),
+                recentTriggerCount = 1,
+                interventionSource = source,
+                customContextMeta = metaText
+            )
+
+            activeProtectedPackage = packageName
+            activeProtectedAppLabel = friendlyApp
+            activeTriggerCategory = reason.triggerCategory
+            activeConfidence = reason.confidence
+            activeInterventionSource = source
+
+            overlayController?.showProtection(reason)
+        }
+
+        LocalStorage.appendActivityLog(
+            context,
+            ActivityLogRecord(
+                type = "SERVICE_STATE",
+                title = "Behavioural Protection (${level.name.replace('_', ' ')})",
+                detail = "$appLabel ($packageName) · Risk $riskScore/100 · $explanation",
+                packageName = packageName,
+                category = "DOOMSCROLL",
+                confirmedIntervention = true
+            )
+        )
+        EventBridge.emitProtectionStateChanged(getActivitySummary(context))
+        return true
+    }
+
     private fun handleManualDismiss(reason: ProtectionReason) {
         val ctx = appContext ?: return
         overlayController?.hideProtection()
+        if (reason.interventionSource == InterventionSource.DOOMSCROLL_GENTLE) {
+            clearActiveMetadata()
+            BehaviouralProtectionCoordinator.onUserContinuedFromGentleReminder(ctx)
+            EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
+            return
+        }
         decisionEngine.onUserDismissedOverlay(reason.packageName)
         clearActiveMetadata()
         LocalStorage.recordProtectionDismissed(ctx)
@@ -518,10 +623,33 @@ object ProtectionCoordinator {
         EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
     }
 
+    private fun formatVisualBlockReason(
+        result: ClassificationResult,
+        decision: ProtectionDecision
+    ): String {
+        val pct = (decision.rawConfidence.coerceIn(0f, 1f) * 100f).toInt()
+        if (result.modelVersion == ProtectionDecisionEngine.DETERMINISTIC_URL_MODEL_VERSION ||
+            result.modelVersion == "multimodal-domain-fastpath"
+        ) {
+            return "Blocked adult account / link"
+        }
+        val cat = decision.triggerCategory.uppercase()
+        return when {
+            result.hentaiScore >= 0.46f -> "Explicit animated / hentai ($pct%)"
+            cat == "SEXUAL_ACTIVITY" -> "Explicit sexual activity ($pct%)"
+            cat == "NUDITY" -> "High nudity ($pct%)"
+            cat == "EXPLICIT" && result.pornScore >= 0.65f -> "High porn / explicit ($pct%)"
+            cat == "EXPLICIT" -> "Explicit content ($pct%)"
+            cat == "SUGGESTIVE" -> "Suggestive / thirst trap ($pct%)"
+            else -> "Blocked content ($pct%)"
+        }
+    }
+
     private fun clearActiveMetadata() {
         activeProtectedPackage = "None"
         activeProtectedAppLabel = "None"
         activeTriggerCategory = "NONE"
         activeConfidence = 0f
+        activeInterventionSource = InterventionSource.VISUAL_CONTENT
     }
 }

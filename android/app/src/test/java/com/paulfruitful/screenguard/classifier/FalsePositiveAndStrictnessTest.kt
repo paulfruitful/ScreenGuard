@@ -481,4 +481,49 @@ class FalsePositiveAndStrictnessTest {
         val fusedSafeAnime = fuse(safeAnime, "New anime episode review")
         assertFalse("Safe anime must stay allowed", fusedSafeAnime.shouldIntervene)
     }
+
+    @Test
+    fun lyingDownNeckTraining_stage1HallucinationWithSafeStage2_isSuppressedByFaceOrFitnessContext() {
+        // Real TikTok false-positive case: close-up man lying horizontally on peach bedsheet
+        // doing neck training ("Day 31 of training neck to see if it helps me ascend").
+        // Stage 1 hallucinates Porn=0.98, Sexy=0.00, while Stage 2 OpenNSFW confirms safe (0.05).
+        val hallucinatedVisual = VisualEvidence(
+            predictedCategory = ContentCategory.SUGGESTIVE.name,
+            confidence = 0.88f,
+            pornScore = 0.98f,
+            sexyScore = 0.00f,
+            stage2Triggered = true,
+            stage2NsfwScore = 0.05f,
+            neutralScore = 0.02f
+        )
+
+        // Case A: Caption OCR detects benign fitness/training text -> suppressed by NLP_NON_SEXUAL_VETO
+        val fitnessCtx = ContextVerificationEvidence(
+            executed = true,
+            faceCount = 0,
+            ocrTextFound = true,
+            nlpScore = OnDeviceNlpContextClassifier.classify(
+                "Day 31 of training neck to see if it helps me ascend"
+            )
+        )
+        val fusedByCaption = fuse(
+            hallucinatedVisual,
+            "Day 31 of training neck to see if it helps me ascend",
+            fitnessCtx
+        )
+        assertFalse("Benign neck-training caption with safe Stage 2 must stay allowed", fusedByCaption.shouldIntervene)
+        assertEquals(ContentCategory.NON_EXPLICIT.name, fusedByCaption.finalCategory)
+
+        // Case B: Rotated 90°/270° lying-down close-up face detected (even with no caption visible)
+        val rotatedFaceCtx = ContextVerificationEvidence(
+            executed = true,
+            faceCount = 1,
+            largestFaceAreaRatio = 0.22f,
+            isTalkingHeadPortrait = true,
+            nlpScore = OnDeviceNlpContextClassifier.classify("")
+        )
+        val fusedByFace = fuse(hallucinatedVisual, "", rotatedFaceCtx)
+        assertFalse("Lying-down close-up face portrait with safe Stage 2 must stay allowed", fusedByFace.shouldIntervene)
+        assertEquals(ContentCategory.NON_EXPLICIT.name, fusedByFace.finalCategory)
+    }
 }

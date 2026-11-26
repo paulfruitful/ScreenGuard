@@ -120,6 +120,40 @@ export interface CoolOffConfig {
   recentActivationCount: number;
 }
 
+export interface DoomscrollConfig {
+  enabled: boolean;
+  tiktokEnabled: boolean;
+  instagramEnabled: boolean;
+  facebookEnabled: boolean;
+  xEnabled: boolean;
+  intendedDurationMinutes: number;
+  strictTimeLimitEnabled: boolean;
+  meaningfulBreakSeconds: number;
+  gentleReminderCooldownSeconds: number;
+  strongInterventionCooldownSeconds: number;
+}
+
+export interface DoomscrollLiveStatus {
+  enabled: boolean;
+  activeAppPackage: string;
+  activeAppName: string;
+  feedContextType: string;
+  isInConfirmedFeed: boolean;
+  feedConfidence: number;
+  activeDurationSeconds: number;
+  videoTransitionCount: number;
+  averageDwellSeconds: number;
+  transitionsPerMinute: number;
+  reopeningCount: number;
+  riskScore: number;
+  riskLevel: string;
+  lastInterventionLevel: string;
+  intendedDurationMinutes: number;
+  totalSessionsToday: number;
+  totalActiveMinutesToday: number;
+  signalExplanation: string;
+}
+
 export type ScreenGuardEvent =
   | {
       type: 'UPDATE_DOWNLOAD_PROGRESS';

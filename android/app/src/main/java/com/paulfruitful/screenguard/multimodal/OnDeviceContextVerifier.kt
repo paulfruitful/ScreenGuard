@@ -86,21 +86,32 @@ object OnDeviceContextVerifier {
         val image = InputImage.fromBitmap(bitmap, 0)
         val frameArea = (bitmap.width * bitmap.height).toFloat().coerceAtLeast(1f)
 
-        // 1. Face Detection (Talking-head / portrait suppression)
+        // 1. Face Detection (Talking-head / portrait suppression — upright 0° plus 90°/270°
+        //    fallback so lying-down/sideways close-up faces like neck workouts or bed vlogs
+        //    are also recognized as portraits instead of skin/nudity).
         var faceCount = 0
         var largestFaceRatio = 0f
-        try {
-            val faces = Tasks.await(faceDetector.process(image), TASK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-            faceCount = faces.size
-            for (face in faces) {
-                val box = face.boundingBox
-                val ratio = ((box.width().coerceAtLeast(0) * box.height().coerceAtLeast(0)).toFloat() / frameArea)
-                    .coerceIn(0f, 1f)
-                if (ratio > largestFaceRatio) {
-                    largestFaceRatio = ratio
+        fun scanFaces(input: InputImage) {
+            try {
+                val faces = Tasks.await(faceDetector.process(input), TASK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                if (faces.size > faceCount) faceCount = faces.size
+                for (face in faces) {
+                    val box = face.boundingBox
+                    val ratio = ((box.width().coerceAtLeast(0) * box.height().coerceAtLeast(0)).toFloat() / frameArea)
+                        .coerceIn(0f, 1f)
+                    if (ratio > largestFaceRatio) {
+                        largestFaceRatio = ratio
+                    }
                 }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
+        }
+        scanFaces(image)
+        if (faceCount == 0) {
+            scanFaces(InputImage.fromBitmap(bitmap, 90))
+        }
+        if (faceCount == 0) {
+            scanFaces(InputImage.fromBitmap(bitmap, 270))
         }
         // A close-up talking head / vlog / reaction video typically has a face occupying >= 10% of the frame.
         val isTalkingHead = faceCount >= 1 && largestFaceRatio >= 0.10f

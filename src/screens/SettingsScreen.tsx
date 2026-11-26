@@ -10,7 +10,13 @@ import {
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
 import {ScreenGuardNative} from '../services/ScreenGuardNative';
 import {colors, radius, spacing} from '../theme/theme';
-import {AppUpdateInfo, CoolOffConfig, UserPreferences} from '../types/screenguard';
+import {
+  AppUpdateInfo,
+  CoolOffConfig,
+  DoomscrollConfig,
+  DoomscrollLiveStatus,
+  UserPreferences,
+} from '../types/screenguard';
 import {getFriendlyAppName} from '../utils/friendlyFormat';
 
 interface SettingsScreenProps {
@@ -63,10 +69,30 @@ export function SettingsScreen({
     isEscalated: false,
     recentActivationCount: 0,
   });
+  const [doomscrollConfig, setDoomscrollConfig] = useState<DoomscrollConfig>({
+    enabled: false,
+    tiktokEnabled: true,
+    instagramEnabled: true,
+    facebookEnabled: true,
+    xEnabled: true,
+    intendedDurationMinutes: 10,
+    strictTimeLimitEnabled: false,
+    meaningfulBreakSeconds: 60,
+    gentleReminderCooldownSeconds: 300,
+    strongInterventionCooldownSeconds: 600,
+  });
+  const [doomscrollStatus, setDoomscrollStatus] =
+    useState<DoomscrollLiveStatus | null>(null);
 
   useEffect(() => {
     ScreenGuardNative.getCoolOffConfig()
       .then(cfg => setCoolOffConfig(cfg))
+      .catch(() => {});
+    ScreenGuardNative.getDoomscrollConfig()
+      .then(cfg => setDoomscrollConfig(cfg))
+      .catch(() => {});
+    ScreenGuardNative.getDoomscrollStatus()
+      .then(st => setDoomscrollStatus(st))
       .catch(() => {});
   }, []);
 
@@ -74,6 +100,17 @@ export function SettingsScreen({
     setCoolOffConfig(prev => ({...prev, ...patch}));
     ScreenGuardNative.updateCoolOffConfig(patch)
       .then(updated => setCoolOffConfig(updated))
+      .catch(() => {});
+  };
+
+  const updateDoomscroll = (patch: Partial<DoomscrollConfig>) => {
+    setDoomscrollConfig(prev => ({...prev, ...patch}));
+    ScreenGuardNative.updateDoomscrollConfig(patch)
+      .then(updated => {
+        setDoomscrollConfig(updated);
+        return ScreenGuardNative.getDoomscrollStatus();
+      })
+      .then(st => setDoomscrollStatus(st))
       .catch(() => {});
   };
 
@@ -216,6 +253,130 @@ export function SettingsScreen({
             style={styles.outlineBtn}>
             <Text style={styles.outlineBtnText}>Open Cool-Off Room</Text>
           </Pressable>
+        </View>
+
+        {/* Optional Doomscroll Protection (Behavioural Protection Engine) */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Doomscroll Protection (Optional)</Text>
+          <Text style={styles.cardSub}>
+            Detects continuous short-form video scrolling across TikTok,
+            Instagram Reels, Facebook Reels, and X Video — helping you pause
+            with gentle reminders and Cool-Off sessions. 100% local on-device.
+          </Text>
+
+          <View style={styles.switchRow}>
+            <View style={styles.switchTextCol}>
+              <Text style={styles.rowTitle}>Enable Doomscroll Protection</Text>
+              <Text style={styles.rowSubtitle}>
+                {doomscrollConfig.enabled
+                  ? 'Active on selected short-form video feeds (DMs, profiles & regular posts excluded).'
+                  : 'Off by default. Turn on anytime to monitor short-form video feeds.'}
+              </Text>
+            </View>
+            <Switch
+              value={doomscrollConfig.enabled}
+              onValueChange={val => updateDoomscroll({enabled: val})}
+              trackColor={{false: colors.borderStrong, true: colors.royalBlue}}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          {doomscrollConfig.enabled ? (
+            <View style={styles.rowBorderTop}>
+              <Text style={[styles.rowTitle, {marginBottom: 6}]}>
+                Intended Feed Session Time
+              </Text>
+              <View style={[styles.pillRow, {marginBottom: spacing.md}]}>
+                {[5, 10, 15, 30].map(min => {
+                  const active = doomscrollConfig.intendedDurationMinutes === min;
+                  return (
+                    <Pressable
+                      key={min}
+                      onPress={() =>
+                        updateDoomscroll({intendedDurationMinutes: min})
+                      }
+                      style={[styles.pill, active && styles.pillActive]}>
+                      <Text
+                        style={[
+                          styles.pillText,
+                          active && styles.pillTextActive,
+                        ]}>
+                        {min} min
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <Text style={[styles.rowTitle, {marginBottom: 6}]}>
+                Monitored Short-Form Feeds
+              </Text>
+              <View
+                style={[
+                  styles.pillRow,
+                  {flexWrap: 'wrap', marginBottom: spacing.md},
+                ]}>
+                {(
+                  [
+                    ['tiktokEnabled', 'TikTok'],
+                    ['instagramEnabled', 'IG Reels'],
+                    ['facebookEnabled', 'FB Reels'],
+                    ['xEnabled', 'X Video'],
+                  ] as const
+                ).map(([key, label]) => {
+                  const active = doomscrollConfig[key];
+                  return (
+                    <Pressable
+                      key={key}
+                      onPress={() => updateDoomscroll({[key]: !active})}
+                      style={[styles.pill, active && styles.pillActive]}>
+                      <Text
+                        style={[
+                          styles.pillText,
+                          active && styles.pillTextActive,
+                        ]}>
+                        {active ? `✓ ${label}` : label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <View style={styles.switchRow}>
+                <View style={styles.switchTextCol}>
+                  <Text style={styles.rowTitle}>Strict Session Limit</Text>
+                  <Text style={styles.rowSubtitle}>
+                    Trigger a Cool-Off session automatically when your intended
+                    feed time runs out.
+                  </Text>
+                </View>
+                <Switch
+                  value={doomscrollConfig.strictTimeLimitEnabled}
+                  onValueChange={val =>
+                    updateDoomscroll({strictTimeLimitEnabled: val})
+                  }
+                  trackColor={{
+                    false: colors.borderStrong,
+                    true: colors.royalBlue,
+                  }}
+                  thumbColor="#FFFFFF"
+                />
+              </View>
+
+              {doomscrollStatus ? (
+                <Text
+                  style={[
+                    styles.rowSubtitle,
+                    {marginTop: spacing.xs, color: colors.royalBlue},
+                  ]}>
+                  Today: {doomscrollStatus.totalActiveMinutesToday}m across{' '}
+                  {doomscrollStatus.totalSessionsToday} feed session
+                  {doomscrollStatus.totalSessionsToday === 1 ? '' : 's'} · Risk:{' '}
+                  {doomscrollStatus.riskLevel} ({doomscrollStatus.riskScore}/100)
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
 
         {/* 2. Trusted / Excluded Apps */}

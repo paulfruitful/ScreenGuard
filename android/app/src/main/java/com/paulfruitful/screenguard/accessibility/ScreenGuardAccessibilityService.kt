@@ -22,6 +22,7 @@ import com.paulfruitful.screenguard.classifier.ClassifierEvaluator
 import com.paulfruitful.screenguard.classifier.ContentCategory
 import com.paulfruitful.screenguard.classifier.DetectionEngine
 import com.paulfruitful.screenguard.dns.DnsFilterVpnService
+import com.paulfruitful.screenguard.doomscroll.BehaviouralProtectionCoordinator
 import com.paulfruitful.screenguard.multimodal.AdultAccountDirectory
 import com.paulfruitful.screenguard.multimodal.AudioPlaybackCapturePrototype
 import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
@@ -87,10 +88,12 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 ScreenshotProcessor.clearVolatileDebugPreview()
                 DetectionEngine.resetConfirmationState()
                 ProtectionCoordinator.onScreenTurnedOff(applicationContext)
+                BehaviouralProtectionCoordinator.onScreenStateChanged(applicationContext, interactive = false)
             } else if (intent?.action == Intent.ACTION_USER_PRESENT) {
                 if (::frameScheduler.isInitialized) {
                     frameScheduler.start()
                 }
+                BehaviouralProtectionCoordinator.onScreenStateChanged(applicationContext, interactive = true)
             }
         }
     }
@@ -204,6 +207,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         LocalStorage.init(applicationContext)
         DetectionEngine.init(applicationContext)
         ProtectionCoordinator.init(applicationContext)
+        BehaviouralProtectionCoordinator.init(applicationContext)
         eventDebouncer = EventDebouncer(serviceScope)
         frameScheduler = FrameScheduler(
             scope = serviceScope,
@@ -363,6 +367,10 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 newAppLabel = fastResolved.appLabel,
                 windowId = currentWindowId
             )
+            BehaviouralProtectionCoordinator.onForegroundAppChanged(
+                context = applicationContext,
+                newPackageName = newPkg
+            )
 
             val isExcluded = prefs.excludedPackages.contains(newPkg) || newPkg == SELF_PACKAGE
 
@@ -384,6 +392,20 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                     )
                 )
             }
+        }
+
+        // Feed lightweight inline event into the optional Behavioural Protection (Doomscroll) engine.
+        // Zero-cost instant return when disabled in Settings.
+        if (currentForegroundPackage.isNotBlank() &&
+            currentForegroundPackage != "None" &&
+            currentForegroundPackage != SELF_PACKAGE &&
+            !prefs.excludedPackages.contains(currentForegroundPackage)
+        ) {
+            BehaviouralProtectionCoordinator.onAccessibilityEventInline(
+                context = applicationContext,
+                event = event,
+                foregroundPackage = currentForegroundPackage
+            )
         }
 
         if (!prefs.protectionEnabled) return
@@ -625,6 +647,17 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
 
             val classification = outcome.classificationResult
             if (classification != null) {
+                if (classification.frameHash.isNotBlank()) {
+                    try {
+                        val parsedHash = java.lang.Long.parseUnsignedLong(classification.frameHash, 16)
+                        BehaviouralProtectionCoordinator.onExistingVisualFrameHash(
+                            context = applicationContext,
+                            packageName = outcome.packageName,
+                            frameHash = parsedHash
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
                 val decisionStartNs = PipelineTelemetry.nowNs()
                 val prefs = LocalStorage.getPreferences(applicationContext)
                 val policy = ProtectionCoordinator.buildPolicyConfig(prefs)
@@ -999,6 +1032,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         DetectionEngine.resetConfirmationState()
         ServiceHealthMonitor.onServiceDisconnected(reason)
         ProtectionCoordinator.onServiceDisconnected(applicationContext)
+        BehaviouralProtectionCoordinator.onServiceDisconnected(applicationContext)
         BufferReleaseTracker.onServiceDisconnected()
         MonitoringNotificationManager.dismiss(applicationContext)
 

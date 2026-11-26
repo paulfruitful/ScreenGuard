@@ -81,6 +81,7 @@ class ScreenGuardOverlayController(
     private var headingText: TextView? = null
     private var supportingText: TextView? = null
     private var detailMetaText: TextView? = null
+    private var scriptureBoxContainer: LinearLayout? = null
     private var verseQuoteText: TextView? = null
     private var verseReferenceText: TextView? = null
     private var openScriptureButton: TextView? = null
@@ -484,6 +485,7 @@ class ScreenGuardOverlayController(
         }
         openScriptureButton = scriptureBtn
         scriptureBox.addView(scriptureBtn)
+        scriptureBoxContainer = scriptureBox
         card.addView(scriptureBox)
 
         // 6. Primary Action: Gold Pill "Return to Safe Browsing"
@@ -584,6 +586,106 @@ class ScreenGuardOverlayController(
     }
 
     private fun bindReasonToViews(reason: ProtectionReason) {
+        val appName = reason.appLabel.ifBlank { reason.packageName }
+
+        when (reason.interventionSource) {
+            InterventionSource.DOOMSCROLL_GENTLE -> {
+                stateBadgeText?.text = "Screen Guard · Mindful Break"
+                (stateBadgeText?.background as? GradientDrawable)?.setColor(Color.parseColor("#0C2D84"))
+                headingText?.text = reason.customHeading ?: "You've been scrolling for a while."
+                supportingText?.text = reason.customSupportingText
+                    ?: "You've spent some time watching videos. Would you like to take a short break?"
+                detailMetaText?.text = reason.customContextMeta ?: "Active feed in $appName"
+                scriptureBoxContainer?.visibility = View.GONE
+                openScriptureButton?.visibility = View.GONE
+
+                primarySafeButton?.apply {
+                    visibility = View.VISIBLE
+                    text = "Take a Break"
+                    setTextColor(Color.parseColor("#0A1D4E"))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#F5B82E"))
+                    }
+                }
+                coolOffButton?.visibility = View.GONE
+                secondaryDismissButton?.apply {
+                    visibility = View.VISIBLE
+                    text = "Continue"
+                }
+                return
+            }
+
+            InterventionSource.DOOMSCROLL_STRONG -> {
+                stateBadgeText?.text = "!  Behavioural Check-In"
+                (stateBadgeText?.background as? GradientDrawable)?.setColor(Color.parseColor("#D97706"))
+                headingText?.text = reason.customHeading ?: "Take a moment."
+                supportingText?.text = reason.customSupportingText
+                    ?: "You've been consuming videos continuously. Maybe it's time to step away and do something else."
+                detailMetaText?.text = reason.customContextMeta ?: "Extended feed in $appName"
+                scriptureBoxContainer?.visibility = View.VISIBLE
+                openScriptureButton?.visibility = View.GONE
+                verseQuoteText?.text = activeVerse.text
+                verseReferenceText?.text = "— ${activeVerse.reference}"
+
+                primarySafeButton?.apply {
+                    visibility = View.VISIBLE
+                    text = "Return to Safe Home"
+                    setTextColor(Color.parseColor("#0C2D84"))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#EEF3FA"))
+                        setStroke(dpInt(context, 1.5f), Color.parseColor("#0C2D84"))
+                    }
+                }
+                coolOffButton?.apply {
+                    visibility = View.VISIBLE
+                    text = "Take a Cool-Off Session"
+                    setTextColor(Color.parseColor("#0A1D4E"))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#F5B82E"))
+                    }
+                }
+                secondaryDismissButton?.visibility = View.GONE
+                return
+            }
+
+            InterventionSource.DOOMSCROLL_CRITICAL -> {
+                stateBadgeText?.text = "!  Cool-Off Intervention"
+                (stateBadgeText?.background as? GradientDrawable)?.setColor(Color.parseColor("#F59E0B"))
+                headingText?.text = reason.customHeading ?: "Take a moment to cool off."
+                supportingText?.text = reason.customSupportingText
+                    ?: "You've been scrolling continuously for an extended period. Complete a short Cool-Off session to reset your focus."
+                detailMetaText?.text = reason.customContextMeta ?: "Feed protection in $appName · Cool-Off Required"
+                scriptureBoxContainer?.visibility = View.VISIBLE
+                openScriptureButton?.visibility = View.GONE
+                verseQuoteText?.text = activeVerse.text
+                verseReferenceText?.text = "— ${activeVerse.reference}"
+
+                primarySafeButton?.visibility = View.GONE
+                coolOffButton?.apply {
+                    visibility = View.VISIBLE
+                    text = "Take a Cool-Off Session"
+                    setTextColor(Color.parseColor("#0A1D4E"))
+                    background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#F5B82E"))
+                    }
+                }
+                secondaryDismissButton?.visibility = View.GONE
+                return
+            }
+
+            InterventionSource.VISUAL_CONTENT -> {
+                scriptureBoxContainer?.visibility = View.VISIBLE
+            }
+        }
+
         val escalated = reason.isCoolOffEscalated
         val stateLabel = when {
             escalated -> "!  Cool-Off Required"
@@ -606,11 +708,17 @@ class ScreenGuardOverlayController(
             "Screen Guard detected content that matches your protection settings."
         }
 
-        val appName = reason.appLabel.ifBlank { reason.packageName }
+        val shortReason = reason.customContextMeta?.takeIf { it.isNotBlank() } ?: when (reason.triggerCategory.uppercase()) {
+            "EXPLICIT" -> "Explicit / porn"
+            "NUDITY" -> "High nudity"
+            "SEXUAL_ACTIVITY" -> "Explicit sexual activity"
+            "SUGGESTIVE" -> "Suggestive content"
+            else -> "Policy match"
+        }
         detailMetaText?.text = if (escalated) {
-            "Protected in $appName · Cool-Off Required"
+            "$appName · $shortReason · Cool-Off Required"
         } else {
-            "Protected in $appName"
+            "$appName · Reason: $shortReason"
         }
         verseQuoteText?.text = activeVerse.text
         verseReferenceText?.text = "— ${activeVerse.reference}"
@@ -632,7 +740,16 @@ class ScreenGuardOverlayController(
             }
         } else {
             // Normal state: show both Return to Safe Browsing and Cool Off.
-            primarySafeButton?.visibility = View.VISIBLE
+            primarySafeButton?.apply {
+                visibility = View.VISIBLE
+                text = "Return to Safe Browsing"
+                setTextColor(Color.parseColor("#0A1D4E"))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(context, 999f)
+                    setColor(Color.parseColor("#F5B82E"))
+                }
+            }
             openScriptureButton?.visibility = View.VISIBLE
             coolOffButton?.apply {
                 visibility = View.VISIBLE

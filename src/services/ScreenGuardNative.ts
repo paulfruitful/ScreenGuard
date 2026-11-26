@@ -15,6 +15,8 @@ import {
   DebugPreviewResponse,
   DnsFilterConfigInput,
   DnsFilterStatus,
+  DoomscrollConfig,
+  DoomscrollLiveStatus,
   EnableAccountabilityResult,
   EvalSampleMetadata,
   FullEvaluationReport,
@@ -98,6 +100,9 @@ interface ScreenGuardNativeModuleSpec {
   getCoolOffConfig(): Promise<CoolOffConfig>;
   updateCoolOffConfig(patchJson: string): Promise<CoolOffConfig>;
   openCoolOffRoom(durationMinutes: number): Promise<boolean>;
+  getDoomscrollConfig(): Promise<DoomscrollConfig>;
+  updateDoomscrollConfig(patchJson: string): Promise<DoomscrollConfig>;
+  getDoomscrollStatus(): Promise<DoomscrollLiveStatus>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 }
@@ -683,6 +688,23 @@ export const ScreenGuardNative = {
   async openCoolOffRoom(durationMinutes = 0): Promise<boolean> {
     const mod = ensureNativeModule();
     return mod.openCoolOffRoom(durationMinutes);
+  },
+
+  async getDoomscrollConfig(): Promise<DoomscrollConfig> {
+    const mod = ensureNativeModule();
+    return mod.getDoomscrollConfig();
+  },
+
+  async updateDoomscrollConfig(
+    patch: Partial<DoomscrollConfig>,
+  ): Promise<DoomscrollConfig> {
+    const mod = ensureNativeModule();
+    return mod.updateDoomscrollConfig(JSON.stringify(patch));
+  },
+
+  async getDoomscrollStatus(): Promise<DoomscrollLiveStatus> {
+    const mod = ensureNativeModule();
+    return mod.getDoomscrollStatus();
   },
 
   subscribeToEvents(listener: (event: ScreenGuardEvent) => void): () => void {

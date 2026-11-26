@@ -70,6 +70,13 @@ data class ProtectionPolicyConfig(
     }
 }
 
+enum class InterventionSource {
+    VISUAL_CONTENT,
+    DOOMSCROLL_GENTLE,
+    DOOMSCROLL_STRONG,
+    DOOMSCROLL_CRITICAL
+}
+
 data class ProtectionReason(
     val packageName: String,
     val appLabel: String,
@@ -84,7 +91,11 @@ data class ProtectionReason(
     val overlayState: OverlayState,
     val triggeredAtEpochMs: Long = System.currentTimeMillis(),
     val isCoolOffEscalated: Boolean = false,
-    val recentTriggerCount: Int = 1
+    val recentTriggerCount: Int = 1,
+    val interventionSource: InterventionSource = InterventionSource.VISUAL_CONTENT,
+    val customHeading: String? = null,
+    val customSupportingText: String? = null,
+    val customContextMeta: String? = null
 )
 
 enum class DecisionDirective {

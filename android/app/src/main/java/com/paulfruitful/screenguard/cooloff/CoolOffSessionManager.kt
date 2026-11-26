@@ -1,6 +1,7 @@
 package com.paulfruitful.screenguard.cooloff
 
 import android.content.Context
+import com.paulfruitful.screenguard.doomscroll.BehaviouralProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.LocalStorage
 import org.json.JSONObject
@@ -126,6 +127,10 @@ object CoolOffSessionManager {
             )
             saveLocked(context, completed)
             TriggerFrequencyTracker.onCoolOffSessionCompleted(context)
+            try {
+                BehaviouralProtectionCoordinator.onCoolOffSessionCompleted(context)
+            } catch (_: Exception) {
+            }
 
             try {
                 LocalStorage.appendActivityLog(

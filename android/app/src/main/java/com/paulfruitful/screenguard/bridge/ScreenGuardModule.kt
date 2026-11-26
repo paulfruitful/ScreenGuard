@@ -47,6 +47,8 @@ import com.paulfruitful.screenguard.classifier.TemporalDecisionEngine
 import com.paulfruitful.screenguard.cooloff.CoolOffActivity
 import com.paulfruitful.screenguard.cooloff.CoolOffConfigStore
 import com.paulfruitful.screenguard.cooloff.TriggerFrequencyTracker
+import com.paulfruitful.screenguard.doomscroll.BehaviouralProtectionCoordinator
+import com.paulfruitful.screenguard.doomscroll.DoomscrollConfig
 import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
@@ -867,6 +869,77 @@ class ScreenGuardModule(
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERR_COOLOFF_OPEN", e.message, e)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Behavioural Protection Engine (Optional Doomscroll Detection)
+    // ---------------------------------------------------------------------
+
+    private fun doomscrollConfigToMap(cfg: DoomscrollConfig): WritableMap {
+        return Arguments.createMap().apply {
+            putBoolean("enabled", cfg.enabled)
+            putBoolean("tiktokEnabled", cfg.tiktokEnabled)
+            putBoolean("instagramEnabled", cfg.instagramEnabled)
+            putBoolean("facebookEnabled", cfg.facebookEnabled)
+            putBoolean("xEnabled", cfg.xEnabled)
+            putInt("intendedDurationMinutes", cfg.safeIntendedDurationMinutes)
+            putBoolean("strictTimeLimitEnabled", cfg.strictTimeLimitEnabled)
+            putInt("meaningfulBreakSeconds", cfg.meaningfulBreakSeconds)
+            putInt("gentleReminderCooldownSeconds", cfg.gentleReminderCooldownSeconds)
+            putInt("strongInterventionCooldownSeconds", cfg.strongInterventionCooldownSeconds)
+        }
+    }
+
+    @ReactMethod
+    fun getDoomscrollConfig(promise: Promise) {
+        try {
+            val cfg = BehaviouralProtectionCoordinator.getConfig(reactContext.applicationContext)
+            promise.resolve(doomscrollConfigToMap(cfg))
+        } catch (e: Exception) {
+            promise.reject("ERR_DOOMSCROLL_GET_CFG", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun updateDoomscrollConfig(patchJson: String, promise: Promise) {
+        try {
+            val cfg = BehaviouralProtectionCoordinator.updateConfigFromJson(
+                reactContext.applicationContext,
+                patchJson
+            )
+            promise.resolve(doomscrollConfigToMap(cfg))
+        } catch (e: Exception) {
+            promise.reject("ERR_DOOMSCROLL_UPDATE_CFG", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun getDoomscrollStatus(promise: Promise) {
+        try {
+            val s = BehaviouralProtectionCoordinator.getLiveStatus(reactContext.applicationContext)
+            promise.resolve(Arguments.createMap().apply {
+                putBoolean("enabled", s.enabled)
+                putString("activeAppPackage", s.activeAppPackage)
+                putString("activeAppName", s.activeAppName)
+                putString("feedContextType", s.feedContextType)
+                putBoolean("isInConfirmedFeed", s.isInConfirmedFeed)
+                putDouble("feedConfidence", s.feedConfidence.toDouble())
+                putInt("activeDurationSeconds", s.activeDurationSeconds)
+                putInt("videoTransitionCount", s.videoTransitionCount)
+                putDouble("averageDwellSeconds", s.averageDwellSeconds.toDouble())
+                putDouble("transitionsPerMinute", s.transitionsPerMinute.toDouble())
+                putInt("reopeningCount", s.reopeningCount)
+                putInt("riskScore", s.riskScore)
+                putString("riskLevel", s.riskLevel)
+                putString("lastInterventionLevel", s.lastInterventionLevel)
+                putInt("intendedDurationMinutes", s.intendedDurationMinutes)
+                putInt("totalSessionsToday", s.totalSessionsToday)
+                putInt("totalActiveMinutesToday", s.totalActiveMinutesToday)
+                putString("signalExplanation", s.signalExplanation)
+            })
+        } catch (e: Exception) {
+            promise.reject("ERR_DOOMSCROLL_STATUS", e.message, e)
         }
     }
 

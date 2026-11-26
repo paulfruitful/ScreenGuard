@@ -86,17 +86,24 @@ object MultimodalFusionEngine {
             v.predictedCategory == ContentCategory.SUGGESTIVE.name ||
                 v.predictedCategory == ContentCategory.UNCERTAIN.name ||
                 (v.predictedCategory == ContentCategory.SEXUAL_ACTIVITY.name && v.pornScore < 0.30f)
+        val stage2ConfirmedSafeNoSexy =
+            v.stage2Triggered &&
+                v.stage2NsfwScore < 0.20f &&
+                v.sexyScore < 0.40f &&
+                v.hentaiScore < 0.40f
         val hasLowExplicitSignal =
-            v.pornScore < 0.30f &&
+            (v.pornScore < 0.30f &&
                 v.hentaiScore < 0.25f &&
                 v.maxRoiPornScore < 0.35f &&
-                (!v.stage2Triggered || v.stage2NsfwScore < 0.62f)
+                (!v.stage2Triggered || v.stage2NsfwScore < 0.62f)) ||
+                stage2ConfirmedSafeNoSexy
         val nlpSaysNonSexual =
             ctx.executed && nlp.dominantClass == "NON_SEXUAL" && nlp.nonSexualContextProb >= 0.65f
         val hasBenignContext =
             (nlpSaysNonSexual || (c.available && (c.benignNonSexualVisualContext || c.benignDialogueOrEducationalContext))) &&
                 c.hardcoreKeywordScore < 0.35f &&
-                nlp.explicitSexualProb < 0.35f
+                nlp.explicitSexualProb < 0.35f &&
+                nlp.suggestivePromoProb < 0.30f
 
         if (isBorderlineCategory && hasLowExplicitSignal && hasBenignContext) {
             val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
