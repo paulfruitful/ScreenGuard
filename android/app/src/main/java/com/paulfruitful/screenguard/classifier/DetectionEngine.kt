@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import com.paulfruitful.screenguard.accessibility.ScreenTextContextAnalyzer
 import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
+import com.paulfruitful.screenguard.multimodal.NonSexualSceneEvidence
+import com.paulfruitful.screenguard.multimodal.NonSexualSceneVerifier
 import com.paulfruitful.screenguard.multimodal.OnDeviceContextVerifier
 import com.paulfruitful.screenguard.storage.LocalStorage
 import java.util.concurrent.atomic.AtomicInteger
@@ -53,6 +55,7 @@ object DetectionEngine {
     private var lastFrameElapsedMs: Long = 0L
 
     fun init(context: Context) {
+        NonSexualSceneVerifier.init(context.applicationContext)
         if (activeClassifier is MockContentClassifier) {
             synchronized(this) {
                 if (activeClassifier is MockContentClassifier) {
@@ -222,11 +225,35 @@ object DetectionEngine {
                     rawResult.stage2NsfwScore >= 0.30f
 
             latestContextEvidence = if (needsContextVerification && !downsampledBitmap.isRecycled) {
-                OnDeviceContextVerifier.verifyFrame(
+                val baseCtx = OnDeviceContextVerifier.verifyFrame(
                     bitmap = downsampledBitmap,
                     accessibilityText = ScreenTextContextAnalyzer.getLatestRawText(),
                     runOcr = true
                 )
+                // 3c. Normal-content verifier (EfficientNet-Lite0, 1000 everyday classes):
+                // Run ONLY when Stage 1/2 flagged a suspicious non-hentai frame so safe screens
+                // pay 0 ms while animals (dogs/cats/pitbulls), food, vehicles, and UI screens are
+                // deterministically prevented from triggering false sexual blocks.
+                val shouldCheckNormalScene =
+                    rawResult.predictedCategory != ContentCategory.NON_EXPLICIT.name &&
+                        rawResult.predictedCategory != ContentCategory.SAFE.name &&
+                        rawResult.hentaiScore < 0.45f
+                if (shouldCheckNormalScene) {
+                    val hasAnimalTextHint = baseCtx.nlpScore.matchedContextTags.any { tag ->
+                        tag.startsWith("safe:dog") || tag.startsWith("safe:cat") ||
+                            tag.startsWith("safe:pitbull") || tag.startsWith("safe:pet") ||
+                            tag.startsWith("safe:puppy") || tag.startsWith("safe:kitten") ||
+                            tag.startsWith("safe:animal") || tag.startsWith("safe:wildlife")
+                    }
+                    val targetSceneBmp = centerCrop ?: downsampledBitmap
+                    val sceneEvidence = NonSexualSceneVerifier.verify(
+                        bitmap = targetSceneBmp,
+                        hasPetOrAnimalTextHint = hasAnimalTextHint
+                    )
+                    baseCtx.copy(nonSexualScene = sceneEvidence)
+                } else {
+                    baseCtx
+                }
             } else {
                 ContextVerificationEvidence(executed = false)
             }

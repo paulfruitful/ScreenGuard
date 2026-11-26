@@ -57,6 +57,32 @@ object MultimodalFusionEngine {
             )
         }
 
+        // 1a-0. On-Device Normal-Content Scene Veto (EfficientNet-Lite0 1000-class verifier):
+        // When the everyday-content model confirms the subject is an animal (e.g. dogs/pitbulls/cats
+        // wrestling), food, vehicle, landscape, or UI screen — and there is no explicit adult caption
+        // or animated hentai signal — suppress false-positive nudity/porn hallucinations immediately.
+        val scene = ctx.nonSexualScene
+        if (ctx.executed &&
+            scene.executed &&
+            scene.isConfirmedNonSexualScene &&
+            v.hentaiScore < 0.45f &&
+            nlp.explicitSexualProb < 0.50f &&
+            !nlp.explicitPornDomainDetected
+        ) {
+            val dur = maxOf(0L, (SystemClock.elapsedRealtimeNanos() - t0) / 1_000_000L)
+            return FusedMultimodalDecision(
+                finalCategory = ContentCategory.NON_EXPLICIT.name,
+                finalConfidence = maxOf(scene.confidence, 0.88f).coerceIn(0f, 1f),
+                shouldIntervene = false,
+                primaryModality = "VISUAL",
+                corroboratingModalities = listOf("NON_SEXUAL_SCENE_VETO:${scene.sceneCategory}"),
+                uncertaintyPreserved = false,
+                dialogueOnlySuppressed = true,
+                fusionExplanation = "Normal-content verifier vetoed false alarm (scene=${scene.sceneCategory} ${"%.0f".format(scene.confidence * 100)}%, animal=${"%.2f".format(scene.topAnimalProb)})",
+                decisionDurationMs = dur
+            )
+        }
+
         // 1a. Talking-Head / Close-Up Portrait Veto (ML Kit Face Detection):
         // If a large face dominates the frame (vlog, WhatsApp/TikTok talking head, video call)
         // and explicit porn/hentai/Stage-2 scores are not overwhelmingly explicit (< 0.78), suppress false

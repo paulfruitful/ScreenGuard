@@ -129,6 +129,10 @@ class TikTokAdapter : SocialAppFeedAdapter {
             confidence += 0.45f
             reasons.add("feed_container")
         }
+        if (containsAny(tokens, FEED_VIDEO_SURFACE_TOKENS)) {
+            confidence += 0.30f
+            reasons.add("video_surface")
+        }
         if (containsAny(tokens, FEED_TAB_TOKENS)) {
             confidence += 0.30f
             reasons.add("feed_tab")
@@ -142,7 +146,7 @@ class TikTokAdapter : SocialAppFeedAdapter {
             reasons.add("action_chrome(1)")
         }
         if (verticalScroll) {
-            confidence += 0.20f
+            confidence += 0.25f
             reasons.add("vertical_scroll")
         }
 
@@ -174,15 +178,19 @@ class TikTokAdapter : SocialAppFeedAdapter {
 
     companion object {
         private val DM_TOKENS = listOf("direct message", "send a message", "chat_input", "im_chat", "message...", "inbox_activity")
-        private val COMMENT_TOKENS = listOf("add comment", "comment_list", "comment_sheet", "reply to", "view more replies")
-        private val SEARCH_TOKENS = listOf("search_edit", "search bar", "search_input", "discover_search", "you may like")
-        private val PROFILE_TOKENS = listOf("edit profile", "add bio", "user_profile", "profile_header", "followers", "following_list")
-        private val FEED_ID_OR_CLASS_TOKENS = listOf(
-            "verticalviewpager", "viewpager2", "feed_viewpager", "detail_viewpager",
-            "recommend_feed", "aweme", "video_view", "feed_item"
+        private val COMMENT_TOKENS = listOf(
+            "add comment", "comment_list", "comment_sheet", "tv_reply_comment_title",
+            "view more replies", " comments"
         )
-        private val FEED_TAB_TOKENS = listOf("for you", "original sound", "add to favorites", "tiktok_feed")
-        private val FEED_ACTION_TOKENS = listOf("like", "comment", "share", "bookmark", "sound", "music", "follow")
+        private val SEARCH_TOKENS = listOf("search_edit", "search bar", "search_input", "discover_search", "recent searches")
+        private val PROFILE_TOKENS = listOf("edit profile", "add bio", "share profile", "user_profile", "profile_header", "following_list")
+        private val FEED_ID_OR_CLASS_TOKENS = listOf(
+            "verticalviewpager", "viewpager2", "viewpager_container", "view_pager_layout_wrapper",
+            "viewpager", "feed_viewpager", "detail_viewpager", "recommend_feed", "aweme", "video_view", "feed_item"
+        )
+        private val FEED_VIDEO_SURFACE_TOKENS = listOf("long_press_layout", "tv_like_count", "video")
+        private val FEED_TAB_TOKENS = listOf("for you", "original sound", "add to favorites", "tiktok_feed", "following")
+        private val FEED_ACTION_TOKENS = listOf("like", "comment", "share", "bookmark", "sound", "music", "follow", "thumbs up")
     }
 }
 

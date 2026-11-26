@@ -32,6 +32,8 @@ data class ContextVerificationEvidence(
     // Burned-in video caption OCR + On-device NLP
     val ocrTextFound: Boolean = false,
     val nlpScore: NlpContextScore = NlpContextScore(),
+    // On-device 1,000-class everyday/normal-content verifier (animals, food, vehicles, landscapes, UI)
+    val nonSexualScene: NonSexualSceneEvidence = NonSexualSceneEvidence(),
     val durationMs: Long = 0L
 )
 

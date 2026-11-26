@@ -32,9 +32,9 @@ import kotlinx.coroutines.launch
  */
 object BehaviouralProtectionCoordinator {
 
-    private const val MAX_NODE_INSPECTION = 32
-    private const val MAX_NODE_BUDGET_MS = 20L
-    private const val NODE_INSPECTION_MIN_INTERVAL_MS = 1800L
+    private const val MAX_NODE_INSPECTION = 180
+    private const val MAX_NODE_BUDGET_MS = 35L
+    private const val NODE_INSPECTION_MIN_INTERVAL_MS = 1200L
     private const val PERSIST_DEBOUNCE_MS = 15_000L
 
     private val lock = Any()
@@ -63,6 +63,9 @@ object BehaviouralProtectionCoordinator {
 
     @Volatile
     private var currentSupportedPkg: String = ""
+
+    @Volatile
+    private var consecutiveUnknownFullScans: Int = 0
 
     fun init(context: Context) {
         if (initialized && appContext != null) return
@@ -124,6 +127,10 @@ object BehaviouralProtectionCoordinator {
         if (app == SupportedSocialApp.UNSUPPORTED || !cfg.isAppEnabled(app)) return
 
         init(context)
+        if (currentSupportedPkg != foregroundPackage) {
+            currentSupportedPkg = foregroundPackage
+            startScoringTicker(context)
+        }
 
         val className = event.className?.toString() ?: ""
         val contentDesc = event.contentDescription?.toString()
@@ -353,18 +360,59 @@ object BehaviouralProtectionCoordinator {
         // First try zero-IPC inline classification
         var effectiveSnapshot = inlineSnapshot
         var classification = feedDetector.detect(effectiveSnapshot, config)
+        var performedFullNodeInspection = false
 
-        // Only if inline fields were sparse/unknown, run a strictly bounded (<20 ms, <=32 nodes)
-        // background node inspection at most once every 1.8 seconds.
+        // When inline event fields are sparse/unknown (very common for TYPE_WINDOW_CONTENT_CHANGED
+        // timer ticks and animations in TikTok/IG/FB/X), run a bounded background node inspection
+        // at most once every 1.2 seconds.
         val nowMs = inlineSnapshot.timestampMs
-        if (classification.contextType == FeedContextType.UNKNOWN &&
-            (nowMs - lastNodeInspectionMs) >= NODE_INSPECTION_MIN_INTERVAL_MS
-        ) {
-            lastNodeInspectionMs = nowMs
-            val enriched = enrichSnapshotFromActiveWindowSafe(inlineSnapshot)
-            if (enriched != null) {
-                effectiveSnapshot = enriched
-                classification = feedDetector.detect(effectiveSnapshot, config)
+        val isVerticalScroll = AdapterSignalUtils.isVerticalScrollEvent(inlineSnapshot)
+        if (classification.contextType == FeedContextType.UNKNOWN) {
+            if ((nowMs - lastNodeInspectionMs) >= NODE_INSPECTION_MIN_INTERVAL_MS) {
+                lastNodeInspectionMs = nowMs
+                val enriched = enrichSnapshotFromActiveWindowSafe(inlineSnapshot)
+                if (enriched != null) {
+                    performedFullNodeInspection = true
+                    effectiveSnapshot = enriched
+                    classification = feedDetector.detect(effectiveSnapshot, config)
+                }
+                // Hysteresis: when already inside a confirmed short-form feed, require 2 consecutive
+                // full-node UNKNOWN scans before pausing active feed duration so transient mid-swipe
+                // frames never slice away real scrolling time. (Explicit non-feed contexts like
+                // COMMENTS/DMs/PROFILE/SEARCH still pause immediately on the first hit.)
+                if (classification.contextType == FeedContextType.UNKNOWN) {
+                    val currentlyConfirmed = synchronized(lock) {
+                        tracker.isConfirmedFeedForPackage(inlineSnapshot.packageName)
+                    }
+                    if (currentlyConfirmed) {
+                        consecutiveUnknownFullScans++
+                        if (consecutiveUnknownFullScans < 2) {
+                            return
+                        }
+                    }
+                } else {
+                    consecutiveUnknownFullScans = 0
+                }
+            } else {
+                // CRITICAL FIX: A throttled sparse inline event (e.g. video progress/animation tick)
+                // must NEVER downgrade an already-confirmed active short-form feed to UNKNOWN!
+                // If it's a vertical scroll inside an already-confirmed feed, treat it as a scroll signal
+                // for the active feed; otherwise ignore the noisy empty content-change event.
+                val currentlyConfirmed = synchronized(lock) {
+                    tracker.isConfirmedFeedForPackage(inlineSnapshot.packageName)
+                }
+                if (!currentlyConfirmed) return
+                if (!isVerticalScroll) return
+                classification = FeedClassification(
+                    app = SupportedSocialApp.fromPackage(inlineSnapshot.packageName),
+                    contextType = FeedContextType.SHORT_FORM_FEED,
+                    confidence = config.safeMinFeedConfidence,
+                    adapterName = "ActiveFeedScrollContinuation",
+                    contentSignature = AdapterSignalUtils.buildContentSignature(inlineSnapshot),
+                    pagerIndex = inlineSnapshot.fromIndex,
+                    isVerticalScrollSignal = true,
+                    diagnosticReason = "active_feed_vertical_scroll"
+                )
             }
         }
 
@@ -372,8 +420,12 @@ object BehaviouralProtectionCoordinator {
         val snap: BehaviourSnapshot
         val breakdown: SignalBreakdown
         val intervention: InterventionDecision
+        val prevConfirmed: Boolean
+        val prevTransitions: Int
 
         synchronized(lock) {
+            prevConfirmed = tracker.isConfirmedFeedForPackage(inlineSnapshot.packageName)
+            prevTransitions = tracker.snapshot(nowMs, config).videoTransitionCount
             closed = tracker.onFeedClassification(classification, effectiveSnapshot, config)
             snap = tracker.snapshot(nowMs, config)
             breakdown = DoomscrollDetectionEngine.evaluate(snap, config)
@@ -386,6 +438,16 @@ object BehaviouralProtectionCoordinator {
                 isOverlayCurrentlyVisible = ProtectionCoordinator.isOverlayVisible()
             )
             tracker.recordScoringOutcome(breakdown.totalScore, intervention.shouldIntervene)
+        }
+
+        if (prevConfirmed != snap.isInConfirmedFeed ||
+            snap.videoTransitionCount != prevTransitions ||
+            intervention.shouldIntervene
+        ) {
+            android.util.Log.i(
+                "SG_DOOMSCROLL",
+                "pkg=${inlineSnapshot.packageName} ctx=${classification.contextType}(${"%.2f".format(classification.confidence)}) inFeed=${snap.isInConfirmedFeed} activeSec=${snap.activeFeedDurationMs / 1000} vids=${snap.videoTransitionCount} score=${breakdown.totalScore}/${breakdown.riskLevel} fullNode=$performedFullNodeInspection reason=${classification.diagnosticReason}"
+            )
         }
 
         if (closed != null) {
@@ -510,7 +572,7 @@ object BehaviouralProtectionCoordinator {
                 visited++
                 try {
                     val resId = node.viewIdResourceName
-                    if (!resId.isNullOrBlank() && viewIds.size < 20) {
+                    if (!resId.isNullOrBlank() && viewIds.size < 48) {
                         viewIds.add(resId.substringAfterLast('/'))
                     }
                     val cls = node.className?.toString()
@@ -518,14 +580,14 @@ object BehaviouralProtectionCoordinator {
                         classes.append(' ').append(cls.substringAfterLast('.'))
                     }
                     val d = node.contentDescription?.toString()?.trim()
-                    if (!d.isNullOrBlank() && descs.size < 16) {
+                    if (!d.isNullOrBlank() && descs.size < 32) {
                         descs.add(d.take(64))
                     }
                     val t = node.text?.toString()?.trim()
-                    if (!t.isNullOrBlank() && texts.size < 16) {
+                    if (!t.isNullOrBlank() && texts.size < 32) {
                         texts.add(t.take(64))
                     }
-                    val childCount = node.childCount.coerceAtMost(8)
+                    val childCount = node.childCount.coerceAtMost(24)
                     for (i in 0 until childCount) {
                         if (visited + queue.size >= MAX_NODE_INSPECTION) break
                         node.getChild(i)?.let { queue.addLast(it) }

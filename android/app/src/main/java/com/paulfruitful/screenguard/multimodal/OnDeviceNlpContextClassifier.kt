@@ -241,7 +241,21 @@ object OnDeviceNlpContextClassifier {
         "wikipedia" to 2.0f,
         "dictionary" to 2.0f,
         "biology" to 2.0f,
-        "news" to 1.4f
+        "news" to 1.4f,
+        // Pets, animals & wildlife
+        "dog" to 2.2f,
+        "dogs" to 2.2f,
+        "pitbull" to 2.6f,
+        "puppy" to 2.4f,
+        "puppies" to 2.4f,
+        "cat" to 2.2f,
+        "cats" to 2.2f,
+        "kitten" to 2.4f,
+        "pet" to 2.0f,
+        "pets" to 2.0f,
+        "animal" to 2.2f,
+        "animals" to 2.2f,
+        "wildlife" to 2.4f
     )
 
     fun classify(rawText: String): NlpContextScore {

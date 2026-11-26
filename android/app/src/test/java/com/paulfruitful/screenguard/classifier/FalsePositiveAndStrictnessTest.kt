@@ -7,6 +7,7 @@ import com.paulfruitful.screenguard.multimodal.CaptionAndOcrAnalyzer
 import com.paulfruitful.screenguard.multimodal.ContextVerificationEvidence
 import com.paulfruitful.screenguard.multimodal.MultimodalEvidenceBundle
 import com.paulfruitful.screenguard.multimodal.MultimodalFusionEngine
+import com.paulfruitful.screenguard.multimodal.NonSexualSceneEvidence
 import com.paulfruitful.screenguard.multimodal.OcrFrameEvidence
 import com.paulfruitful.screenguard.multimodal.OnDeviceNlpContextClassifier
 import com.paulfruitful.screenguard.multimodal.VisualEvidence
@@ -525,5 +526,58 @@ class FalsePositiveAndStrictnessTest {
         val fusedByFace = fuse(hallucinatedVisual, "", rotatedFaceCtx)
         assertFalse("Lying-down close-up face portrait with safe Stage 2 must stay allowed", fusedByFace.shouldIntervene)
         assertEquals(ContentCategory.NON_EXPLICIT.name, fusedByFace.finalCategory)
+    }
+
+    @Test
+    fun catAndPitbullWrestling_normalContentVerifierVetoesBothStage1AndStage2FalseAlarms() {
+        // Real live false-positive case: a cat and a tan pitbull wrestling caused BOTH
+        // Stage 1 (porn=0.99) and Stage 2 Yahoo OpenNSFW (s2=0.87) to misfire.
+        val animalFalsePositiveVisual = VisualEvidence(
+            predictedCategory = ContentCategory.EXPLICIT.name,
+            confidence = 0.99f,
+            pornScore = 0.99f,
+            explicitScore = 0.99f,
+            sexyScore = 0.01f,
+            stage2Triggered = true,
+            stage2NsfwScore = 0.87f,
+            neutralScore = 0.01f
+        )
+
+        val animalCtx = ContextVerificationEvidence(
+            executed = true,
+            faceCount = 0,
+            ocrTextFound = true,
+            nlpScore = OnDeviceNlpContextClassifier.classify("No be small fight lol #dog #viral #pitbull"),
+            nonSexualScene = NonSexualSceneEvidence(
+                executed = true,
+                isConfirmedNonSexualScene = true,
+                sceneCategory = "ANIMAL",
+                confidence = 0.78f,
+                topAnimalProb = 0.78f,
+                topPetProb = 0.78f,
+                petSum = 0.91f
+            )
+        )
+
+        val fused = fuse(animalFalsePositiveVisual, "#dog #pitbull", animalCtx)
+        assertFalse("Confirmed ANIMAL scene must veto false Stage 1 + Stage 2 nudity alarms", fused.shouldIntervene)
+        assertEquals(ContentCategory.NON_EXPLICIT.name, fused.finalCategory)
+        assertTrue(fused.corroboratingModalities.contains("NON_SEXUAL_SCENE_VETO:ANIMAL"))
+
+        // Guardrail: real human explicit porn where EfficientNet does NOT confirm an animal/food scene still blocks
+        val realHumanCtx = ContextVerificationEvidence(
+            executed = true,
+            nlpScore = OnDeviceNlpContextClassifier.classify(""),
+            nonSexualScene = NonSexualSceneEvidence(
+                executed = true,
+                isConfirmedNonSexualScene = false,
+                sceneCategory = "NONE",
+                confidence = 0.14f,
+                topAnimalProb = 0.14f
+            )
+        )
+        val fusedReal = fuse(animalFalsePositiveVisual, "", realHumanCtx)
+        assertTrue("Real human explicit content must still block", fusedReal.shouldIntervene)
+        assertEquals(ContentCategory.EXPLICIT.name, fusedReal.finalCategory)
     }
 }

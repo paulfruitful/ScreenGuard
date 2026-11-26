@@ -301,6 +301,10 @@ class BehaviourTracker(
 
     fun getLastClosedSession(): FeedSessionRecord? = lastClosedSession
 
+    fun isConfirmedFeedForPackage(packageName: String): Boolean {
+        return isInConfirmedFeed && sessionPackage.equals(packageName, ignoreCase = true)
+    }
+
     private fun handleFeedEntry(
         app: SupportedSocialApp,
         packageName: String,

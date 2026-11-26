@@ -34,7 +34,31 @@ class DoomscrollProtectionTest {
 
     @Test
     fun adapters_distinguishShortFormFeedsFromDMsProfilesCommentsAndLongFormAcrossAllFourApps() {
-        // 1. TikTok: For You feed vs. DMs / Comments / Profile / Unknown updated UI
+        // 1. TikTok: Real production UI tree (ProGuard pager '06v5', id='viewpager', 'long_press_layout' Video)
+        val ttRealLiveFeed = detector.detect(
+            FeedObservationSnapshot(
+                packageName = "com.zhiliaoapp.musically",
+                eventType = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                className = "06v5 ViewPager",
+                viewIdResourceNames = listOf("viewpager", "viewpager_container", "long_press_layout"),
+                contentDescriptions = listOf("Video", "Thumbs up")
+            ),
+            enabledConfig
+        )
+        assertTrue("Real TikTok viewpager + Video surface must be confirmed as SHORT_FORM_FEED", ttRealLiveFeed.isConfirmedShortFormFeed(enabledConfig.safeMinFeedConfidence))
+
+        val ttRealComments = detector.detect(
+            FeedObservationSnapshot(
+                packageName = "com.zhiliaoapp.musically",
+                eventType = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                viewIdResourceNames = listOf("viewpager", "tv_reply_comment_title"),
+                texts = listOf("181 comments", "View 6 replies")
+            ),
+            enabledConfig
+        )
+        assertEquals(FeedContextType.COMMENTS, ttRealComments.contextType)
+
+        // 1b. TikTok: For You feed vs. DMs / Comments / Profile / Unknown updated UI
         val ttFeed = detector.detect(
             FeedObservationSnapshot(
                 packageName = "com.zhiliaoapp.musically",
