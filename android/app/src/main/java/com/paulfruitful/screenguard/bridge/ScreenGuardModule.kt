@@ -44,6 +44,9 @@ import com.paulfruitful.screenguard.classifier.FullEvaluationReport
 import com.paulfruitful.screenguard.classifier.SingleSampleEvalResult
 import com.paulfruitful.screenguard.classifier.SplitEvaluationMetrics
 import com.paulfruitful.screenguard.classifier.TemporalDecisionEngine
+import com.paulfruitful.screenguard.cooloff.CoolOffActivity
+import com.paulfruitful.screenguard.cooloff.CoolOffConfigStore
+import com.paulfruitful.screenguard.cooloff.TriggerFrequencyTracker
 import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
@@ -803,6 +806,67 @@ class ScreenGuardModule(
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("ERR_INSTALL_SETTINGS", e.message, e)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Cool-Off Room configuration & launcher
+    // ---------------------------------------------------------------------
+
+    @ReactMethod
+    fun getCoolOffConfig(promise: Promise) {
+        try {
+            val ctx = reactContext.applicationContext
+            val cfg = CoolOffConfigStore.load(ctx)
+            val freq = TriggerFrequencyTracker.getState(ctx)
+            promise.resolve(Arguments.createMap().apply {
+                putInt("triggerThreshold", cfg.safeThreshold)
+                putInt("detectionWindowMinutes", cfg.detectionWindowMinutes)
+                putInt("defaultDurationMinutes", cfg.safeDurationMinutes)
+                putString("audioCategory", cfg.audioCategory.name)
+                putBoolean("audioMuted", cfg.audioMuted)
+                putDouble("audioVolume", cfg.audioVolume.toDouble())
+                putBoolean("isEscalated", freq.isEscalated)
+                putInt("recentActivationCount", freq.recentActivationCount)
+            })
+        } catch (e: Exception) {
+            promise.reject("ERR_COOLOFF_GET", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun updateCoolOffConfig(patchJson: String, promise: Promise) {
+        try {
+            val ctx = reactContext.applicationContext
+            val cfg = CoolOffConfigStore.updateFromJson(ctx, patchJson)
+            val freq = TriggerFrequencyTracker.getState(ctx)
+            promise.resolve(Arguments.createMap().apply {
+                putInt("triggerThreshold", cfg.safeThreshold)
+                putInt("detectionWindowMinutes", cfg.detectionWindowMinutes)
+                putInt("defaultDurationMinutes", cfg.safeDurationMinutes)
+                putString("audioCategory", cfg.audioCategory.name)
+                putBoolean("audioMuted", cfg.audioMuted)
+                putDouble("audioVolume", cfg.audioVolume.toDouble())
+                putBoolean("isEscalated", freq.isEscalated)
+                putInt("recentActivationCount", freq.recentActivationCount)
+            })
+        } catch (e: Exception) {
+            promise.reject("ERR_COOLOFF_UPDATE", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun openCoolOffRoom(durationMinutes: Double, promise: Promise) {
+        try {
+            val dur = durationMinutes.toInt().let { if (it in listOf(1, 3, 5)) it else null }
+            CoolOffActivity.launch(
+                context = reactContext.applicationContext,
+                durationMinutes = dur,
+                forceNewSession = false
+            )
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("ERR_COOLOFF_OPEN", e.message, e)
         }
     }
 

@@ -109,6 +109,17 @@ export interface UpdateInstallOutcome {
   filePath: string;
 }
 
+export interface CoolOffConfig {
+  triggerThreshold: number;
+  detectionWindowMinutes: number;
+  defaultDurationMinutes: number;
+  audioCategory: string;
+  audioMuted: boolean;
+  audioVolume: number;
+  isEscalated: boolean;
+  recentActivationCount: number;
+}
+
 export type ScreenGuardEvent =
   | {
       type: 'UPDATE_DOWNLOAD_PROGRESS';

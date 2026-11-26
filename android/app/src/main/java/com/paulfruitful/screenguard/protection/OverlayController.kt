@@ -56,6 +56,7 @@ interface OverlayController {
 class ScreenGuardOverlayController(
     private val appContext: Context,
     private val onReturnToSafetyClicked: (ProtectionReason) -> Unit,
+    private val onCoolOffClicked: (ProtectionReason) -> Unit,
     private val onOpenScriptureClicked: (ProtectionReason, MinistryBibleVerse) -> Unit,
     private val onDismissClicked: (ProtectionReason) -> Unit
 ) : OverlayController {
@@ -84,6 +85,7 @@ class ScreenGuardOverlayController(
     private var verseReferenceText: TextView? = null
     private var openScriptureButton: TextView? = null
     private var primarySafeButton: TextView? = null
+    private var coolOffButton: TextView? = null
     private var secondaryDismissButton: TextView? = null
 
     override fun isVisible(): Boolean = isOverlayAttached
@@ -512,6 +514,36 @@ class ScreenGuardOverlayController(
         primarySafeButton = primaryBtn
         card.addView(primaryBtn)
 
+        // 6b. Cool Off Action (visible alongside Return to Safe Browsing in Normal state;
+        // promoted to the ONLY primary Gold action in Escalated Cool-Off-required state)
+        val coolBtn = TextView(context).apply {
+            text = "Cool Off"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+            setTextColor(Color.parseColor("#0C2D84"))
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(context, 999f)
+                setColor(Color.parseColor("#EEF3FA"))
+                setStroke(dpInt(context, 1.5f), Color.parseColor("#0C2D84"))
+            }
+            setPadding(dpInt(context, 20f), dpInt(context, 14f), dpInt(context, 20f), dpInt(context, 14f))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpInt(context, 10f)
+            }
+            setOnClickListener {
+                currentReason?.let { r -> onCoolOffClicked(r) }
+            }
+        }
+        coolOffButton = coolBtn
+        card.addView(coolBtn)
+
         // 7. Optional Dismiss Action (subject to active protection policy)
         val dismissBtn = TextView(context).apply {
             text = "Dismiss for This Screen"
@@ -552,20 +584,68 @@ class ScreenGuardOverlayController(
     }
 
     private fun bindReasonToViews(reason: ProtectionReason) {
-        val stateLabel = if (reason.overlayState == OverlayState.RECOVERING) {
-            "✓  Checking Screen Safety"
-        } else {
-            "✓  Screen Guard Protected"
+        val escalated = reason.isCoolOffEscalated
+        val stateLabel = when {
+            escalated -> "!  Cool-Off Required"
+            reason.overlayState == OverlayState.RECOVERING -> "✓  Checking Screen Safety"
+            else -> "✓  Screen Guard Protected"
         }
         stateBadgeText?.text = stateLabel
-        headingText?.text = "Content hidden for your protection."
-        supportingText?.text =
+        (stateBadgeText?.background as? GradientDrawable)?.setColor(
+            Color.parseColor(if (escalated) "#F59E0B" else "#1BB55C")
+        )
+
+        headingText?.text = if (escalated) {
+            "Take a moment to cool off."
+        } else {
+            "Content hidden for your protection."
+        }
+        supportingText?.text = if (escalated) {
+            "Multiple blocks were triggered in a short time. Complete a short Cool-Off session to regain composure and reset."
+        } else {
             "Screen Guard detected content that matches your protection settings."
+        }
 
         val appName = reason.appLabel.ifBlank { reason.packageName }
-        detailMetaText?.text = "Protected in $appName"
+        detailMetaText?.text = if (escalated) {
+            "Protected in $appName · Cool-Off Required"
+        } else {
+            "Protected in $appName"
+        }
         verseQuoteText?.text = activeVerse.text
         verseReferenceText?.text = "— ${activeVerse.reference}"
+
+        if (escalated) {
+            // Escalated state: Cool Off is the ONLY navigation action.
+            // Hide Return to Safe Browsing and external Bible links so user cannot bypass.
+            primarySafeButton?.visibility = View.GONE
+            openScriptureButton?.visibility = View.GONE
+            coolOffButton?.apply {
+                visibility = View.VISIBLE
+                text = "Cool Off"
+                setTextColor(Color.parseColor("#0A1D4E"))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(context, 999f)
+                    setColor(Color.parseColor("#F5B82E"))
+                }
+            }
+        } else {
+            // Normal state: show both Return to Safe Browsing and Cool Off.
+            primarySafeButton?.visibility = View.VISIBLE
+            openScriptureButton?.visibility = View.VISIBLE
+            coolOffButton?.apply {
+                visibility = View.VISIBLE
+                text = "Cool Off"
+                setTextColor(Color.parseColor("#0C2D84"))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(context, 999f)
+                    setColor(Color.parseColor("#EEF3FA"))
+                    setStroke(dpInt(context, 1.5f), Color.parseColor("#0C2D84"))
+                }
+            }
+        }
 
         secondaryDismissButton?.visibility = View.GONE
     }

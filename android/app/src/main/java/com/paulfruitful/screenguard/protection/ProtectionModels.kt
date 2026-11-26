@@ -82,7 +82,9 @@ data class ProtectionReason(
     val sensitivityMode: ProtectionSensitivityMode,
     val allowManualDismiss: Boolean,
     val overlayState: OverlayState,
-    val triggeredAtEpochMs: Long = System.currentTimeMillis()
+    val triggeredAtEpochMs: Long = System.currentTimeMillis(),
+    val isCoolOffEscalated: Boolean = false,
+    val recentTriggerCount: Int = 1
 )
 
 enum class DecisionDirective {

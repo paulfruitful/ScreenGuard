@@ -10,6 +10,7 @@ import {
   ActivityLogEntry,
   AppCompatibilityRecord,
   AppUpdateInfo,
+  CoolOffConfig,
   DebounceTestResult,
   DebugPreviewResponse,
   DnsFilterConfigInput,
@@ -94,6 +95,9 @@ interface ScreenGuardNativeModuleSpec {
   ): Promise<UpdateInstallOutcome>;
   canRequestPackageInstalls(): Promise<boolean>;
   openInstallUnknownAppsSettings(): Promise<boolean>;
+  getCoolOffConfig(): Promise<CoolOffConfig>;
+  updateCoolOffConfig(patchJson: string): Promise<CoolOffConfig>;
+  openCoolOffRoom(durationMinutes: number): Promise<boolean>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 }
@@ -662,6 +666,23 @@ export const ScreenGuardNative = {
   async openInstallUnknownAppsSettings(): Promise<boolean> {
     const mod = ensureNativeModule();
     return mod.openInstallUnknownAppsSettings();
+  },
+
+  async getCoolOffConfig(): Promise<CoolOffConfig> {
+    const mod = ensureNativeModule();
+    return mod.getCoolOffConfig();
+  },
+
+  async updateCoolOffConfig(
+    patch: Partial<CoolOffConfig>,
+  ): Promise<CoolOffConfig> {
+    const mod = ensureNativeModule();
+    return mod.updateCoolOffConfig(JSON.stringify(patch));
+  },
+
+  async openCoolOffRoom(durationMinutes = 0): Promise<boolean> {
+    const mod = ensureNativeModule();
+    return mod.openCoolOffRoom(durationMinutes);
   },
 
   subscribeToEvents(listener: (event: ScreenGuardEvent) => void): () => void {

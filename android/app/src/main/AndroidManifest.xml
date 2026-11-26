@@ -43,6 +43,14 @@
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
             android:exported="false" />
 
+        <activity
+            android:name=".cooloff.CoolOffActivity"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|smallestScreenSize"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:exported="false" />
+
         <service
             android:name=".accessibility.ScreenGuardAccessibilityService"
             android:label="@string/accessibility_service_label"

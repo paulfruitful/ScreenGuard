@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   Pressable,
   ScrollView,
@@ -10,7 +10,7 @@ import {
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
 import {ScreenGuardNative} from '../services/ScreenGuardNative';
 import {colors, radius, spacing} from '../theme/theme';
-import {AppUpdateInfo, UserPreferences} from '../types/screenguard';
+import {AppUpdateInfo, CoolOffConfig, UserPreferences} from '../types/screenguard';
 import {getFriendlyAppName} from '../utils/friendlyFormat';
 
 interface SettingsScreenProps {
@@ -53,6 +53,29 @@ export function SettingsScreen({
   dnsFilterActive,
 }: SettingsScreenProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [coolOffConfig, setCoolOffConfig] = useState<CoolOffConfig>({
+    triggerThreshold: 3,
+    detectionWindowMinutes: 3,
+    defaultDurationMinutes: 3,
+    audioCategory: 'SOFT_PIANO',
+    audioMuted: false,
+    audioVolume: 0.55,
+    isEscalated: false,
+    recentActivationCount: 0,
+  });
+
+  useEffect(() => {
+    ScreenGuardNative.getCoolOffConfig()
+      .then(cfg => setCoolOffConfig(cfg))
+      .catch(() => {});
+  }, []);
+
+  const updateCoolOff = (patch: Partial<CoolOffConfig>) => {
+    setCoolOffConfig(prev => ({...prev, ...patch}));
+    ScreenGuardNative.updateCoolOffConfig(patch)
+      .then(updated => setCoolOffConfig(updated))
+      .catch(() => {});
+  };
 
   const removeExcludedPackage = (pkg: string) => {
     onUpdatePreferences({
@@ -115,6 +138,83 @@ export function SettingsScreen({
                 ? 'Manage Uninstall Protection (Locked)'
                 : 'Enable Uninstall Protection'}
             </Text>
+          </Pressable>
+        </View>
+
+        {/* Cool-Off Room Settings */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Cool-Off Room</Text>
+          <Text style={styles.cardSub}>
+            Guided psychological exercises, offline scripture meditation, and
+            calming instrumentals when repeated triggers occur.
+            {coolOffConfig.isEscalated ? ' (Cool-Off currently required)' : ''}
+          </Text>
+
+          <Text style={[styles.rowTitle, {marginBottom: 6}]}>
+            Default Session Duration
+          </Text>
+          <View style={[styles.pillRow, {marginBottom: spacing.md}]}>
+            {[1, 3, 5].map(min => {
+              const active = coolOffConfig.defaultDurationMinutes === min;
+              return (
+                <Pressable
+                  key={min}
+                  onPress={() => updateCoolOff({defaultDurationMinutes: min})}
+                  style={[styles.pill, active && styles.pillActive]}>
+                  <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                    {min} min
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.rowTitle, {marginBottom: 6}]}>
+            Escalation Threshold (Triggers)
+          </Text>
+          <View style={[styles.pillRow, {marginBottom: spacing.md}]}>
+            {[2, 3, 4, 5].map(count => {
+              const active = coolOffConfig.triggerThreshold === count;
+              return (
+                <Pressable
+                  key={count}
+                  onPress={() => updateCoolOff({triggerThreshold: count})}
+                  style={[styles.pill, active && styles.pillActive]}>
+                  <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                    {count}×
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.rowTitle, {marginBottom: 6}]}>
+            Rolling Detection Window
+          </Text>
+          <View style={[styles.pillRow, {marginBottom: spacing.md}]}>
+            {[2, 3, 4, 5].map(win => {
+              const active = coolOffConfig.detectionWindowMinutes === win;
+              return (
+                <Pressable
+                  key={win}
+                  onPress={() => updateCoolOff({detectionWindowMinutes: win})}
+                  style={[styles.pill, active && styles.pillActive]}>
+                  <Text style={[styles.pillText, active && styles.pillTextActive]}>
+                    {win}m
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Pressable
+            onPress={() => {
+              ScreenGuardNative.openCoolOffRoom(
+                coolOffConfig.defaultDurationMinutes,
+              ).catch(() => {});
+            }}
+            style={styles.outlineBtn}>
+            <Text style={styles.outlineBtnText}>Open Cool-Off Room</Text>
           </Pressable>
         </View>
 

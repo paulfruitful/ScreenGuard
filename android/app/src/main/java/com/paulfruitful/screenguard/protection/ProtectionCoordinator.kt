@@ -12,6 +12,8 @@ import com.paulfruitful.screenguard.MainActivity
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
 import com.paulfruitful.screenguard.bridge.EventBridge
 import com.paulfruitful.screenguard.classifier.ClassificationResult
+import com.paulfruitful.screenguard.cooloff.CoolOffActivity
+import com.paulfruitful.screenguard.cooloff.TriggerFrequencyTracker
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
 import com.paulfruitful.screenguard.storage.LocalStorage
 import com.paulfruitful.screenguard.storage.UserPreferencesData
@@ -66,6 +68,7 @@ object ProtectionCoordinator {
                 overlayController = ScreenGuardOverlayController(
                     appContext = ctx,
                     onReturnToSafetyClicked = { reason -> handleReturnToSafety(reason) },
+                    onCoolOffClicked = { reason -> handleOpenCoolOff(reason) },
                     onOpenScriptureClicked = { reason, verse -> handleOpenScripture(reason, verse) },
                     onDismissClicked = { reason -> handleManualDismiss(reason) }
                 )
@@ -117,6 +120,12 @@ object ProtectionCoordinator {
             activeTriggerCategory = decision.triggerCategory
             activeConfidence = decision.rawConfidence
 
+            val frequencyState = if (decision.directive == DecisionDirective.TRIGGER_PROTECTION) {
+                TriggerFrequencyTracker.recordShieldActivation(context)
+            } else {
+                TriggerFrequencyTracker.getState(context)
+            }
+
             val reason = ProtectionReason(
                 packageName = pkg,
                 appLabel = activeProtectedAppLabel,
@@ -128,7 +137,9 @@ object ProtectionCoordinator {
                 requiredConfirmations = policy.confirmationFramesRequired,
                 sensitivityMode = policy.sensitivityMode,
                 allowManualDismiss = policy.allowManualDismiss,
-                overlayState = decision.targetOverlayState
+                overlayState = decision.targetOverlayState,
+                isCoolOffEscalated = frequencyState.isEscalated,
+                recentTriggerCount = frequencyState.recentActivationCount
             )
 
             if (decision.directive == DecisionDirective.TRIGGER_PROTECTION) {
@@ -276,6 +287,7 @@ object ProtectionCoordinator {
         activeTriggerCategory = testCategory
         activeConfidence = 0.96f
 
+        val freqState = TriggerFrequencyTracker.getState(context)
         val reason = ProtectionReason(
             packageName = fgPkg,
             appLabel = fgLabel,
@@ -287,7 +299,9 @@ object ProtectionCoordinator {
             requiredConfirmations = policy.confirmationFramesRequired,
             sensitivityMode = policy.sensitivityMode,
             allowManualDismiss = policy.allowManualDismiss,
-            overlayState = OverlayState.PROTECTED
+            overlayState = OverlayState.PROTECTED,
+            isCoolOffEscalated = freqState.isEscalated,
+            recentTriggerCount = freqState.recentActivationCount
         )
 
         overlayController?.showProtection(reason)
@@ -374,6 +388,43 @@ object ProtectionCoordinator {
                 type = "SERVICE_STATE",
                 title = "User Clicked 'Return to Safe Browsing'",
                 detail = "Hid protective overlay and navigated to the home page of ${reason.appLabel} ($targetPkg).",
+                packageName = targetPkg
+            )
+        )
+
+        EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
+    }
+
+    private fun handleOpenCoolOff(reason: ProtectionReason) {
+        val ctx = appContext ?: return
+        overlayController?.hideProtection()
+        decisionEngine.resetAll()
+        clearActiveMetadata()
+
+        val targetPkg = reason.packageName.ifBlank {
+            ScreenGuardAccessibilityService.currentForegroundPackage
+        }
+        // Exit the offending media/post in the underlying app before opening Cool-Off Room.
+        val service = ScreenGuardAccessibilityService.getActiveInstance()
+        if (service != null && targetPkg != SELF_PACKAGE) {
+            try {
+                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            } catch (_: Exception) {
+            }
+        }
+
+        CoolOffActivity.launch(ctx)
+
+        LocalStorage.appendActivityLog(
+            ctx,
+            ActivityLogRecord(
+                type = "SERVICE_STATE",
+                title = if (reason.isCoolOffEscalated) {
+                    "Entered Cool-Off Room (Escalated)"
+                } else {
+                    "Entered Cool-Off Room"
+                },
+                detail = "User entered Cool-Off Room from Protective Shield over ${reason.appLabel}. Protection remains active.",
                 packageName = targetPkg
             )
         )
