@@ -21,7 +21,7 @@ android {
         applicationId "com.paulfruitful.screenguard"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 42
+        versionCode 54
         versionName "1.6.4"
 
         ndk {
