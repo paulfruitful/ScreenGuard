@@ -252,6 +252,61 @@ object ScreenTextContextAnalyzer {
         return latestSignal
     }
 
+    /**
+     * Fast, strictly bounded off-main-thread visible-text read (<= 96 nodes, <= 35 ms budget)
+     * used ONLY on app switch / resume from Recents so an already-open blacklisted porn/OnlyFans
+     * profile on X, TikTok, Instagram, or Chrome is blocked immediately even when the resume
+     * AccessibilityEvent carries no inline text.
+     */
+    fun extractVisibleWindowTextQuick(
+        service: AccessibilityService,
+        targetPackageName: String
+    ): String {
+        if (Looper.myLooper() == Looper.getMainLooper()) return ""
+        val root = findApplicationWindowRoot(service, targetPackageName) ?: return ""
+        val sb = StringBuilder(512)
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        val startMs = SystemClock.elapsedRealtime()
+        var visited = 0
+        try {
+            while (queue.isNotEmpty() && visited < 96) {
+                if ((SystemClock.elapsedRealtime() - startMs) >= MAX_SCAN_BUDGET_MS) break
+                val node = queue.removeFirst()
+                visited++
+                try {
+                    val t = node.text?.toString()?.trim()
+                    if (!t.isNullOrBlank() && t.length <= 220) {
+                        sb.append(t).append(' ')
+                    }
+                    val d = node.contentDescription?.toString()?.trim()
+                    if (!d.isNullOrBlank() && d.length <= 180) {
+                        sb.append(d).append(' ')
+                    }
+                    if (sb.length >= 1600) break
+                    val childCount = node.childCount.coerceAtMost(20)
+                    for (i in 0 until childCount) {
+                        if (visited + queue.size >= 96) break
+                        node.getChild(i)?.let { queue.addLast(it) }
+                    }
+                } finally {
+                    if (node !== root) {
+                        try { node.recycle() } catch (_: Exception) {}
+                    }
+                }
+            }
+        } finally {
+            while (queue.isNotEmpty()) {
+                val leftover = queue.removeFirst()
+                if (leftover !== root) {
+                    try { leftover.recycle() } catch (_: Exception) {}
+                }
+            }
+            try { root.recycle() } catch (_: Exception) {}
+        }
+        return sb.toString().trim()
+    }
+
     internal fun scoreText(
         combinedLower: String,
         subtitleNodeFound: Boolean,

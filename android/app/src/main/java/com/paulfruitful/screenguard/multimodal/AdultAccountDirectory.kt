@@ -1,13 +1,118 @@
 package com.paulfruitful.screenguard.multimodal
 
+import android.content.Context
+import org.json.JSONArray
+
 /**
  * Fast O(1) on-device lookup of known adult/porn social media handles, adult studio brands,
- * and explicit hashtags.
+ * explicit hashtags, and user-added custom blocked pages/handles.
  *
  * Handles are matched ONLY when prefixed with `@` or inside `x.com/` / `twitter.com/` URLs
- * so ordinary English words in normal posts never false-positive.
+ * so ordinary English words in normal posts never false-positive. User-added custom handles/names
+ * are persisted locally and enforced immediately across all apps.
  */
 object AdultAccountDirectory {
+
+    private const val PREFS_NAME = "screenguard_custom_blocklist"
+    private const val KEY_CUSTOM_ENTRIES = "custom_blocked_pages_v1"
+
+    private val customLock = Any()
+
+    @Volatile
+    private var customLoaded: Boolean = false
+
+    @Volatile
+    private var customBlockedEntries: List<String> = emptyList()
+
+    fun init(context: Context) {
+        if (customLoaded) return
+        synchronized(customLock) {
+            if (customLoaded) return
+            customBlockedEntries = loadCustomLocked(context)
+            customLoaded = true
+        }
+    }
+
+    fun getCustomBlockedPages(context: Context): List<String> {
+        init(context)
+        return customBlockedEntries
+    }
+
+    fun addCustomBlockedPage(context: Context, rawEntry: String): List<String> {
+        init(context)
+        val normalized = normalizeCustomEntry(rawEntry)
+        if (normalized.isBlank()) return customBlockedEntries
+        synchronized(customLock) {
+            val updated = (customBlockedEntries + normalized).distinct()
+            saveCustomLocked(context, updated)
+            customBlockedEntries = updated
+            return updated
+        }
+    }
+
+    fun removeCustomBlockedPage(context: Context, entry: String): List<String> {
+        init(context)
+        val norm = normalizeCustomEntry(entry)
+        synchronized(customLock) {
+            val updated = customBlockedEntries.filterNot {
+                it.equals(entry.trim(), ignoreCase = true) || it.equals(norm, ignoreCase = true)
+            }
+            saveCustomLocked(context, updated)
+            customBlockedEntries = updated
+            return updated
+        }
+    }
+
+    fun setCustomBlockedEntriesForTests(entries: Collection<String>) {
+        synchronized(customLock) {
+            customBlockedEntries = entries.mapNotNull { normalizeCustomEntry(it).takeIf { s -> s.isNotBlank() } }.distinct()
+            customLoaded = true
+        }
+    }
+
+    internal fun normalizeCustomEntry(raw: String): String {
+        var s = raw.trim().lowercase()
+        if (s.isBlank()) return ""
+        // Strip common profile URL prefixes if the user pastes a full link
+        s = s.removePrefix("https://").removePrefix("http://").removePrefix("www.")
+        for (prefix in listOf("x.com/", "twitter.com/", "instagram.com/", "tiktok.com/", "facebook.com/", "onlyfans.com/")) {
+            if (s.startsWith(prefix)) {
+                s = s.removePrefix(prefix).substringBefore('/').substringBefore('?')
+                if (s.isNotBlank() && !s.startsWith("@")) s = "@$s"
+                break
+            }
+        }
+        s = s.trim()
+        val bare = s.removePrefix("@")
+        if (bare.length < 2) return ""
+        return s
+    }
+
+    private fun loadCustomLocked(context: Context): List<String> {
+        return try {
+            val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val raw = sp.getString(KEY_CUSTOM_ENTRIES, null) ?: return emptyList()
+            val arr = JSONArray(raw)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val v = normalizeCustomEntry(arr.optString(i, ""))
+                    if (v.isNotBlank()) add(v)
+                }
+            }.distinct()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveCustomLocked(context: Context, entries: List<String>) {
+        try {
+            val arr = JSONArray()
+            entries.forEach { arr.put(it) }
+            val sp = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            sp.edit().putString(KEY_CUSTOM_ENTRIES, arr.toString()).apply()
+        } catch (_: Exception) {
+        }
+    }
 
     private val HANDLE_REGEX = Regex("(?:@|(?:x|twitter)\\.com/)([a-z0-9_]{3,32})")
     private val HASHTAG_REGEX = Regex("#([a-z0-9_]{2,32})")
@@ -257,6 +362,29 @@ object AdultAccountDirectory {
         var priorityHit = false
 
         val hasEducationalContext = EDUCATIONAL_EXEMPTIONS.any { lowerText.contains(it) }
+
+        // 0. Always check user-added custom blocked handles & page names first (works across ALL apps)
+        val customList = customBlockedEntries
+        if (customList.isNotEmpty()) {
+            for (entry in customList) {
+                val bare = entry.removePrefix("@")
+                if (bare.length < 2) continue
+                val matched = if (entry.startsWith("@") || !bare.contains(' ')) {
+                    lowerText.contains("@$bare") ||
+                        lowerText.contains("x.com/$bare") ||
+                        lowerText.contains("twitter.com/$bare") ||
+                        lowerText.contains("instagram.com/$bare") ||
+                        lowerText.contains("tiktok.com/@$bare") ||
+                        containsWholeWord(lowerText, bare)
+                } else {
+                    lowerText.contains(bare)
+                }
+                if (matched) {
+                    accountHit = true
+                    if (tags.size < 4) tags.add("custom:$entry")
+                }
+            }
+        }
 
         // 1. Check @handles and x.com/<handle> / twitter.com/<handle>
         for (m in HANDLE_REGEX.findAll(lowerText)) {

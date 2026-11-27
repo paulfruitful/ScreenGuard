@@ -1,6 +1,7 @@
 package com.paulfruitful.screenguard.protection
 
 import android.accessibilityservice.AccessibilityService
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
@@ -233,6 +234,10 @@ object ProtectionCoordinator {
 
     fun onScreenTurnedOff(context: Context) {
         init(context)
+        // Keep an active unbypassable Cool-Off session locked across screen lock/unlock
+        if (overlayController?.isInInteractiveBreakOrCoolOff() == true) {
+            return
+        }
         val wasVisible = overlayController?.isVisible() == true
         overlayController?.hideProtection()
         decisionEngine.resetAll()
@@ -399,11 +404,11 @@ object ProtectionCoordinator {
             ScreenGuardAccessibilityService.currentForegroundPackage
         }
 
-        // Doomscroll "Take a Break": close the app cleanly (GLOBAL_ACTION_HOME) and suggest
+        // Doomscroll "Take a Break": exit video/PiP + close & shut down app cleanly, then suggest
         // cooling off for ANY time interval of the user's choosing.
         if (reason.interventionSource == InterventionSource.DOOMSCROLL_GENTLE) {
-            suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 2500L
-            exitUnderlyingAppToHome(targetPkg)
+            suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 3000L
+            closeAndShutdownUnderlyingApp(ctx, targetPkg)
             val defaultMin = CoolOffConfigStore.load(ctx).safeDurationMinutes
             overlayController?.showTakeABreakChooser(
                 closedAppName = reason.appLabel.ifBlank { targetPkg },
@@ -415,7 +420,8 @@ object ProtectionCoordinator {
                         appLabel = reason.appLabel,
                         isEscalated = false,
                         requestedDurationMinutes = chosenMinutes,
-                        forceNewSession = true
+                        forceNewSession = true,
+                        appAlreadyClosed = true
                     )
                 },
                 onSkipBreak = {
@@ -429,7 +435,7 @@ object ProtectionCoordinator {
                 ActivityLogRecord(
                     type = "SERVICE_STATE",
                     title = "User Clicked 'Take a Break'",
-                    detail = "Closed ${reason.appLabel} ($targetPkg) and opened custom Cool-Off duration chooser.",
+                    detail = "Closed and shut down ${reason.appLabel} ($targetPkg) and opened custom Cool-Off duration chooser.",
                     packageName = targetPkg
                 )
             )
@@ -438,24 +444,24 @@ object ProtectionCoordinator {
         }
 
         // Porn Shield "Return to Safe Browsing" / Doomscroll Strong "Return to Safe Home":
-        // Close the underlying app cleanly via GLOBAL_ACTION_HOME and bring Screen Guard Home forward.
-        suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 1500L
-        exitUnderlyingAppToHome(targetPkg)
+        // Close video/PiP, exit offending page, go Home, kill background process, and open Screen Guard Home.
+        suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 2000L
+        closeAndShutdownUnderlyingApp(ctx, targetPkg)
         clearActiveMetadata()
         mainHandler.postDelayed({
             navigateToApplicationHomePage(ctx, targetPkg)
-        }, 120L)
+        }, 340L)
         mainHandler.postDelayed({
             overlayController?.hideProtection()
             EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
-        }, 380L)
+        }, 620L)
 
         LocalStorage.appendActivityLog(
             ctx,
             ActivityLogRecord(
                 type = "SERVICE_STATE",
                 title = "User Clicked 'Return to Safe Browsing'",
-                detail = "Closed ${reason.appLabel} ($targetPkg) and returned to safe Home.",
+                detail = "Closed and shut down ${reason.appLabel} ($targetPkg) and returned to safe Home.",
                 packageName = targetPkg
             )
         )
@@ -472,15 +478,49 @@ object ProtectionCoordinator {
             appLabel = reason.appLabel,
             isEscalated = reason.isCoolOffEscalated,
             requestedDurationMinutes = null,
-            forceNewSession = false
+            forceNewSession = false,
+            appAlreadyClosed = false
         )
     }
 
     /**
-     * Closes the underlying app cleanly (`GLOBAL_ACTION_HOME`), launches [CoolOffActivity]
-     * while the trusted Accessibility overlay is still attached, and automatically falls back
-     * to the full interactive In-Overlay Cool-Off Room if an OEM ROM (e.g. Xiaomi HyperOS
-     * MIUIOP 10021) blocks background Activity launches.
+     * Opens the unbypassable Protective Guard In-Overlay Cool-Off Room directly (e.g. from Settings).
+     * Falls back to [CoolOffActivity] only if neither Accessibility Overlay nor System Alert Window is available.
+     */
+    fun openCoolOffOverlayDirectly(
+        context: Context,
+        requestedDurationMinutes: Int? = null,
+        forceNewSession: Boolean = false
+    ) {
+        init(context)
+        val canAttachOverlay = ScreenGuardAccessibilityService.getActiveInstance() != null ||
+            (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
+                android.provider.Settings.canDrawOverlays(context))
+        if (canAttachOverlay) {
+            suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 2000L
+            overlayController?.showInOverlayCoolOffSession(
+                durationMinutes = requestedDurationMinutes,
+                forceNew = forceNewSession,
+                onFinishedAndClose = {
+                    clearActiveMetadata()
+                    EventBridge.emitProtectionStateChanged(getActivitySummary(context))
+                }
+            )
+            EventBridge.emitProtectionStateChanged(getActivitySummary(context))
+        } else {
+            CoolOffActivity.launch(
+                context = context,
+                durationMinutes = requestedDurationMinutes,
+                forceNewSession = forceNewSession
+            )
+        }
+    }
+
+    /**
+     * Shuts down the offending app cleanly (BACK -> BACK -> HOME -> killBackgroundProcesses so
+     * Picture-in-Picture never spawns and the app doesn't stay minimized playing in the background),
+     * and IMMEDIATELY enters the unbypassable Protective Guard In-Overlay Cool-Off Room as the
+     * default Cool-Off experience (cannot be swiped away or boycotted via Recents/Home).
      */
     private fun launchCoolOffFlow(
         ctx: Context,
@@ -488,53 +528,37 @@ object ProtectionCoordinator {
         appLabel: String,
         isEscalated: Boolean,
         requestedDurationMinutes: Int?,
-        forceNewSession: Boolean
+        forceNewSession: Boolean,
+        appAlreadyClosed: Boolean
     ) {
         decisionEngine.resetAll()
-        suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 2500L
+        suppressHideOnAppSwitchUntilMs = System.currentTimeMillis() + 3000L
 
-        // 1. Immediately close/exit the offending app (stops video/audio playback right away)
-        exitUnderlyingAppToHome(targetPkg)
-
-        // 2. Launch CoolOffActivity after a tiny settle while overlay is STILL visible
-        val launchContext: Context = ScreenGuardAccessibilityService.getActiveInstance() ?: ctx
-        mainHandler.postDelayed({
-            CoolOffActivity.launch(
-                context = launchContext,
-                durationMinutes = requestedDurationMinutes,
-                forceNewSession = forceNewSession
-            )
-        }, 140L)
-
-        // 3. Verify CoolOffActivity actually reached foreground; if Xiaomi HyperOS / Android BAL
-        //    blocked it, seamlessly display the interactive Cool-Off Room inside our overlay!
-        mainHandler.postDelayed({
-            if (CoolOffActivity.isCurrentlyForeground) {
-                overlayController?.hideProtection()
+        // 1. Immediately transition our unbypassable Protective Guard overlay into the Cool-Off Room
+        overlayController?.showInOverlayCoolOffSession(
+            durationMinutes = requestedDurationMinutes,
+            forceNew = forceNewSession,
+            onFinishedAndClose = {
                 clearActiveMetadata()
                 EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
-            } else {
-                overlayController?.showInOverlayCoolOffSession(
-                    durationMinutes = requestedDurationMinutes,
-                    forceNew = forceNewSession,
-                    onFinishedAndClose = {
-                        clearActiveMetadata()
-                        EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
-                    }
-                )
             }
-        }, 620L)
+        )
+
+        // 2. Behind the opaque Cool-Off Room overlay, exit video/PiP, exit page, go Home, and shut down the app
+        if (!appAlreadyClosed) {
+            closeAndShutdownUnderlyingApp(ctx, targetPkg)
+        }
 
         LocalStorage.appendActivityLog(
             ctx,
             ActivityLogRecord(
                 type = "SERVICE_STATE",
                 title = if (isEscalated) {
-                    "Entered Cool-Off Room (Escalated)"
+                    "Entered Protective Cool-Off Room (Escalated)"
                 } else {
-                    "Entered Cool-Off Room"
+                    "Entered Protective Cool-Off Room"
                 },
-                detail = "Closed $appLabel ($targetPkg) and launched Cool-Off Room${if (requestedDurationMinutes != null) " (${requestedDurationMinutes}m)" else ""}.",
+                detail = "Closed and shut down $appLabel ($targetPkg) and opened unbypassable Protective Cool-Off Room${if (requestedDurationMinutes != null) " (${requestedDurationMinutes}m)" else ""}.",
                 packageName = targetPkg
             )
         )
@@ -542,13 +566,46 @@ object ProtectionCoordinator {
         EventBridge.emitProtectionStateChanged(getActivitySummary(ctx))
     }
 
-    private fun exitUnderlyingAppToHome(targetPkg: String) {
-        val service = ScreenGuardAccessibilityService.getActiveInstance() ?: return
-        if (targetPkg == SELF_PACKAGE) return
-        try {
-            service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
-        } catch (_: Exception) {
+    /**
+     * Multi-step clean shutdown for the offending app while our opaque shield stays on screen:
+     * 1. BACK #1 (0ms): Closes fullscreen video players/lightboxes so Android PiP NEVER spawns.
+     * 2. BACK #2 (110ms): Exits the offending profile/page inside the app.
+     * 3. HOME (220ms): Exits the app to the launcher.
+     * 4. killBackgroundProcesses (380ms & 700ms): Terminates the background process cleanly.
+     */
+    private fun closeAndShutdownUnderlyingApp(ctx: Context, targetPkg: String) {
+        if (targetPkg.isBlank() || targetPkg == "None" || targetPkg == SELF_PACKAGE) return
+        val service = ScreenGuardAccessibilityService.getActiveInstance()
+        if (service != null) {
+            try {
+                service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+            } catch (_: Exception) {
+            }
+            mainHandler.postDelayed({
+                try {
+                    ScreenGuardAccessibilityService.getActiveInstance()
+                        ?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
+                } catch (_: Exception) {
+                }
+            }, 110L)
+            mainHandler.postDelayed({
+                try {
+                    ScreenGuardAccessibilityService.getActiveInstance()
+                        ?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
+                } catch (_: Exception) {
+                }
+            }, 220L)
         }
+
+        val killTask = Runnable {
+            try {
+                val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                am?.killBackgroundProcesses(targetPkg)
+            } catch (_: Exception) {
+            }
+        }
+        mainHandler.postDelayed(killTask, 380L)
+        mainHandler.postDelayed(killTask, 700L)
     }
 
     private fun handleOpenScripture(reason: ProtectionReason, verse: MinistryBibleVerse) {

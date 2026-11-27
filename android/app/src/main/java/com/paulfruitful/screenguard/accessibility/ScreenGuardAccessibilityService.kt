@@ -205,6 +205,7 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
     override fun onCreate() {
         super.onCreate()
         LocalStorage.init(applicationContext)
+        AdultAccountDirectory.init(applicationContext)
         DetectionEngine.init(applicationContext)
         ProtectionCoordinator.init(applicationContext)
         BehaviouralProtectionCoordinator.init(applicationContext)
@@ -419,43 +420,46 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         if (prefs.excludedPackages.contains(activePkg)) return
 
         // SPLIT-SECOND FAST-PATH (< 50 ms):
-        // On X / social media apps, if the incoming AccessibilityEvent's fresh text matches a known
-        // adult account, studio, explicit hashtag (#nsfw), or high-priority keyword (shmood, goons,
-        // chudai, wataa, slut, ebony, freaks, 18+, throat goat, phat ass, nut + emoji, etc.),
-        // raise the protective shield IMMEDIATELY without waiting 1s+ for screenshot capture/ML!
-        if (freshInlineText.isNotBlank() && activePkg in AdultAccountDirectory.SOCIAL_PACKAGES) {
-            val fastMatch = AdultAccountDirectory.inspect(freshInlineText, isSocialApp = true)
+        // 1. On incoming inline event text (social apps + user-added custom blocked pages across all apps)
+        if (freshInlineText.isNotBlank()) {
+            val isSocial = activePkg in AdultAccountDirectory.SOCIAL_PACKAGES
+            val fastMatch = AdultAccountDirectory.inspect(freshInlineText, isSocialApp = isSocial)
             if (fastMatch.shouldBlockImmediately) {
-                val appLabelSnapshot = currentForegroundAppLabel
-                val winIdSnapshot = currentWindowId
-                serviceScope.launch {
-                    if (!ProtectionCoordinator.isOverlayVisible()) {
-                        val instantResult = ClassificationResult(
-                            scores = mapOf("EXPLICIT" to 0.99f),
-                            predictedCategory = ContentCategory.EXPLICIT.name,
-                            confidence = 0.99f,
-                            pornScore = 0.99f,
-                            explicitScore = 0.99f,
-                            isExplicit = true,
-                            confirmedIntervention = true,
-                            processingDurationMs = 1L,
-                            modelVersion = ProtectionDecisionEngine.DETERMINISTIC_URL_MODEL_VERSION,
-                            successful = true,
-                            packageName = activePkg,
-                            windowId = winIdSnapshot
-                        )
-                        android.util.Log.i(
-                            "SG_PIPELINE",
-                            "SPLIT_SECOND_BLOCK pkg=$activePkg tags=${fastMatch.matchedTags.joinToString(",")}"
-                        )
-                        ProtectionCoordinator.onClassificationResult(
-                            context = applicationContext,
-                            result = instantResult,
-                            appLabel = appLabelSnapshot
-                        )
+                triggerSplitSecondAccountBlock(activePkg, currentForegroundAppLabel, currentWindowId, fastMatch.matchedTags)
+                return
+            }
+        }
+
+        // 2. On app switch / sliding back from Recents: Android's resume event often carries only
+        //    the app title ("X") in inline text, so immediately inspect the resumed window's visible
+        //    nodes on the background worker (at 35ms and 260ms) to keep instant blacklist blocking!
+        if (isAppChanged) {
+            val appLabelSnapshot = currentForegroundAppLabel
+            val winIdSnapshot = currentWindowId
+            val isSocial = activePkg in AdultAccountDirectory.SOCIAL_PACKAGES
+            serviceScope.launch {
+                for (waitMs in longArrayOf(35L, 240L)) {
+                    delay(waitMs)
+                    if (currentForegroundPackage != activePkg || ProtectionCoordinator.isOverlayVisible()) break
+                    val visibleText = ScreenTextContextAnalyzer.extractVisibleWindowTextQuick(
+                        service = this@ScreenGuardAccessibilityService,
+                        targetPackageName = activePkg
+                    )
+                    if (visibleText.isBlank()) continue
+                    val resumedMatch = AdultAccountDirectory.inspect(visibleText, isSocialApp = isSocial)
+                    val resumedSig = ScreenTextContextAnalyzer.scoreText(visibleText.lowercase(), false, 1L)
+                    if (resumedMatch.shouldBlockImmediately ||
+                        (resumedSig.isExplicitPornDomain && !resumedSig.isBenignEducationalOrDialogue)
+                    ) {
+                        val tags = if (resumedMatch.matchedTags.isNotEmpty()) {
+                            resumedMatch.matchedTags
+                        } else {
+                            resumedSig.matchedIndicators
+                        }
+                        triggerSplitSecondAccountBlock(activePkg, appLabelSnapshot, winIdSnapshot, tags)
+                        break
                     }
                 }
-                return
             }
         }
 
@@ -475,6 +479,41 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 isAppSwitch = isAppChanged
             )
         )
+    }
+
+    private fun triggerSplitSecondAccountBlock(
+        activePkg: String,
+        appLabelSnapshot: String,
+        winIdSnapshot: Int,
+        matchedTags: List<String>
+    ) {
+        serviceScope.launch {
+            if (!ProtectionCoordinator.isOverlayVisible()) {
+                val instantResult = ClassificationResult(
+                    scores = mapOf("EXPLICIT" to 0.99f),
+                    predictedCategory = ContentCategory.EXPLICIT.name,
+                    confidence = 0.99f,
+                    pornScore = 0.99f,
+                    explicitScore = 0.99f,
+                    isExplicit = true,
+                    confirmedIntervention = true,
+                    processingDurationMs = 1L,
+                    modelVersion = ProtectionDecisionEngine.DETERMINISTIC_URL_MODEL_VERSION,
+                    successful = true,
+                    packageName = activePkg,
+                    windowId = winIdSnapshot
+                )
+                android.util.Log.i(
+                    "SG_PIPELINE",
+                    "SPLIT_SECOND_BLOCK pkg=$activePkg tags=${matchedTags.joinToString(",")}"
+                )
+                ProtectionCoordinator.onClassificationResult(
+                    context = applicationContext,
+                    result = instantResult,
+                    appLabel = appLabelSnapshot
+                )
+            }
+        }
     }
 
     /**

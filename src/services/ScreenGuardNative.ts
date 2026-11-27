@@ -103,6 +103,9 @@ interface ScreenGuardNativeModuleSpec {
   getDoomscrollConfig(): Promise<DoomscrollConfig>;
   updateDoomscrollConfig(patchJson: string): Promise<DoomscrollConfig>;
   getDoomscrollStatus(): Promise<DoomscrollLiveStatus>;
+  getCustomBlockedPages(): Promise<string[]>;
+  addCustomBlockedPage(entry: string): Promise<string[]>;
+  removeCustomBlockedPage(entry: string): Promise<string[]>;
   addListener(eventName: string): void;
   removeListeners(count: number): void;
 }
@@ -705,6 +708,21 @@ export const ScreenGuardNative = {
   async getDoomscrollStatus(): Promise<DoomscrollLiveStatus> {
     const mod = ensureNativeModule();
     return mod.getDoomscrollStatus();
+  },
+
+  async getCustomBlockedPages(): Promise<string[]> {
+    const mod = ensureNativeModule();
+    return mod.getCustomBlockedPages();
+  },
+
+  async addCustomBlockedPage(entry: string): Promise<string[]> {
+    const mod = ensureNativeModule();
+    return mod.addCustomBlockedPage(entry);
+  },
+
+  async removeCustomBlockedPage(entry: string): Promise<string[]> {
+    const mod = ensureNativeModule();
+    return mod.removeCustomBlockedPage(entry);
   },
 
   subscribeToEvents(listener: (event: ScreenGuardEvent) => void): () => void {

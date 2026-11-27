@@ -580,4 +580,28 @@ class FalsePositiveAndStrictnessTest {
         assertTrue("Real human explicit content must still block", fusedReal.shouldIntervene)
         assertEquals(ContentCategory.EXPLICIT.name, fusedReal.finalCategory)
     }
+
+    @Test
+    fun customUserBlockedPages_handlesNamesAndUrlsBlockImmediatelyAcrossAllApps() {
+        try {
+            AdultAccountDirectory.setCustomBlockedEntriesForTests(
+                listOf("https://x.com/CustomOnlyFansGirl", "Spicy Creator Name", "@badpage99")
+            )
+
+            val byHandle = AdultAccountDirectory.inspect("Profile: @customonlyfansgirl · 12K followers", isSocialApp = false)
+            assertTrue("Custom handle pasted as x.com URL must block immediately on any app", byHandle.shouldBlockImmediately)
+            assertTrue(byHandle.matchedTags.any { it.contains("customonlyfansgirl") })
+
+            val byName = AdultAccountDirectory.inspect("Watching Spicy Creator Name live", isSocialApp = false)
+            assertTrue("Custom creator display name must block immediately", byName.shouldBlockImmediately)
+
+            val bySecondHandle = AdultAccountDirectory.inspect("Resumed window showing @badpage99", isSocialApp = true)
+            assertTrue("Custom @handle must block immediately on resume", bySecondHandle.shouldBlockImmediately)
+
+            val unrelated = AdultAccountDirectory.inspect("Normal news article about football", isSocialApp = true)
+            assertFalse("Unrelated safe text must not match custom blocklist", unrelated.shouldBlockImmediately)
+        } finally {
+            AdultAccountDirectory.setCustomBlockedEntriesForTests(emptyList())
+        }
+    }
 }

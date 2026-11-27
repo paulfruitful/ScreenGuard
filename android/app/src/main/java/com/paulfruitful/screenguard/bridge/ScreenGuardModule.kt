@@ -49,6 +49,7 @@ import com.paulfruitful.screenguard.cooloff.CoolOffConfigStore
 import com.paulfruitful.screenguard.cooloff.TriggerFrequencyTracker
 import com.paulfruitful.screenguard.doomscroll.BehaviouralProtectionCoordinator
 import com.paulfruitful.screenguard.doomscroll.DoomscrollConfig
+import com.paulfruitful.screenguard.multimodal.AdultAccountDirectory
 import com.paulfruitful.screenguard.pipeline.PipelineTelemetry
 import com.paulfruitful.screenguard.protection.ProtectionCoordinator
 import com.paulfruitful.screenguard.storage.ActivityLogRecord
@@ -125,6 +126,7 @@ class ScreenGuardModule(
 
     init {
         LocalStorage.init(reactContext.applicationContext)
+        AdultAccountDirectory.init(reactContext.applicationContext)
         AccountabilityManager.init(reactContext.applicationContext)
         DetectionEngine.init(reactContext.applicationContext)
         ProtectionCoordinator.init(reactContext.applicationContext)
@@ -860,10 +862,10 @@ class ScreenGuardModule(
     @ReactMethod
     fun openCoolOffRoom(durationMinutes: Double, promise: Promise) {
         try {
-            val dur = durationMinutes.toInt().let { if (it in listOf(1, 3, 5)) it else null }
-            CoolOffActivity.launch(
+            val dur = durationMinutes.toInt().let { if (it in 1..60) it else null }
+            ProtectionCoordinator.openCoolOffOverlayDirectly(
                 context = reactContext.applicationContext,
-                durationMinutes = dur,
+                requestedDurationMinutes = dur,
                 forceNewSession = false
             )
             promise.resolve(true)
@@ -940,6 +942,46 @@ class ScreenGuardModule(
             })
         } catch (e: Exception) {
             promise.reject("ERR_DOOMSCROLL_STATUS", e.message, e)
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // User-added Custom Blocked Porn Pages / Handles / Creator Names
+    // ---------------------------------------------------------------------
+
+    private fun stringListToWritableArray(items: List<String>): WritableArray {
+        val arr = Arguments.createArray()
+        items.forEach { arr.pushString(it) }
+        return arr
+    }
+
+    @ReactMethod
+    fun getCustomBlockedPages(promise: Promise) {
+        try {
+            val items = AdultAccountDirectory.getCustomBlockedPages(reactContext.applicationContext)
+            promise.resolve(stringListToWritableArray(items))
+        } catch (e: Exception) {
+            promise.reject("ERR_BLOCKLIST_GET", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun addCustomBlockedPage(entry: String, promise: Promise) {
+        try {
+            val updated = AdultAccountDirectory.addCustomBlockedPage(reactContext.applicationContext, entry)
+            promise.resolve(stringListToWritableArray(updated))
+        } catch (e: Exception) {
+            promise.reject("ERR_BLOCKLIST_ADD", e.message, e)
+        }
+    }
+
+    @ReactMethod
+    fun removeCustomBlockedPage(entry: String, promise: Promise) {
+        try {
+            val updated = AdultAccountDirectory.removeCustomBlockedPage(reactContext.applicationContext, entry)
+            promise.resolve(stringListToWritableArray(updated))
+        } catch (e: Exception) {
+            promise.reject("ERR_BLOCKLIST_REMOVE", e.message, e)
         }
     }
 

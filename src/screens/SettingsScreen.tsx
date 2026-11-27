@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import {ScreenGuardLogo} from '../components/ScreenGuardLogo';
@@ -83,6 +84,8 @@ export function SettingsScreen({
   });
   const [doomscrollStatus, setDoomscrollStatus] =
     useState<DoomscrollLiveStatus | null>(null);
+  const [customBlockedPages, setCustomBlockedPages] = useState<string[]>([]);
+  const [newBlockedInput, setNewBlockedInput] = useState('');
 
   useEffect(() => {
     ScreenGuardNative.getCoolOffConfig()
@@ -94,7 +97,26 @@ export function SettingsScreen({
     ScreenGuardNative.getDoomscrollStatus()
       .then(st => setDoomscrollStatus(st))
       .catch(() => {});
+    ScreenGuardNative.getCustomBlockedPages()
+      .then(items => setCustomBlockedPages(items))
+      .catch(() => {});
   }, []);
+
+  const handleAddBlockedPage = () => {
+    const trimmed = newBlockedInput.trim();
+    if (trimmed.length < 2) return;
+    setNewBlockedInput('');
+    ScreenGuardNative.addCustomBlockedPage(trimmed)
+      .then(updated => setCustomBlockedPages(updated))
+      .catch(() => {});
+  };
+
+  const handleRemoveBlockedPage = (entry: string) => {
+    if (protectionLocked) return;
+    ScreenGuardNative.removeCustomBlockedPage(entry)
+      .then(updated => setCustomBlockedPages(updated))
+      .catch(() => {});
+  };
 
   const updateCoolOff = (patch: Partial<CoolOffConfig>) => {
     setCoolOffConfig(prev => ({...prev, ...patch}));
@@ -377,6 +399,56 @@ export function SettingsScreen({
               ) : null}
             </View>
           ) : null}
+        </View>
+
+        {/* Custom Blocked Porn Pages & Handles */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Blocked Pages & Accounts</Text>
+          <Text style={styles.cardSub}>
+            Screen Guard instantly blocks 420+ built-in adult pages whenever
+            opened or resumed. Add extra @handles, creator names, or profile
+            links below.
+          </Text>
+
+          <View style={styles.blockInputRow}>
+            <TextInput
+              value={newBlockedInput}
+              onChangeText={setNewBlockedInput}
+              placeholder="e.g. @handle, creator name, or x.com/..."
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="done"
+              onSubmitEditing={handleAddBlockedPage}
+              style={styles.blockInput}
+            />
+            <Pressable
+              onPress={handleAddBlockedPage}
+              style={styles.blockAddBtn}>
+              <Text style={styles.blockAddBtnText}>Add</Text>
+            </Pressable>
+          </View>
+
+          {customBlockedPages.length > 0 ? (
+            <View style={styles.chipWrap}>
+              {customBlockedPages.map(entry => (
+                <View key={entry} style={styles.pkgChip}>
+                  <Text style={styles.pkgChipText}>{entry}</Text>
+                  {!protectionLocked ? (
+                    <Pressable
+                      onPress={() => handleRemoveBlockedPage(entry)}
+                      hitSlop={8}>
+                      <Text style={styles.pkgChipRemove}>✕</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyHint}>
+              No custom pages added yet. Built-in blacklist is active.
+            </Text>
+          )}
         </View>
 
         {/* 2. Trusted / Excluded Apps */}
@@ -671,6 +743,34 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   pickAppsArrow: {color: '#FFFFFF', fontSize: 20, fontWeight: '700'},
+  blockInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  blockInput: {
+    flex: 1,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    fontSize: 13.5,
+    color: colors.textPrimary,
+  },
+  blockAddBtn: {
+    backgroundColor: colors.royalBlue,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: 11,
+  },
+  blockAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13.5,
+    fontWeight: '800',
+  },
   emptyHint: {
     fontSize: 12,
     color: colors.textMuted,
