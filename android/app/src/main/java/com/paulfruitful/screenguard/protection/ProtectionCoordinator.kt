@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Browser
 import com.paulfruitful.screenguard.MainActivity
+import com.paulfruitful.screenguard.accessibility.ActiveWindowResolver
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
 import com.paulfruitful.screenguard.bridge.EventBridge
 import com.paulfruitful.screenguard.classifier.ClassificationResult
@@ -65,7 +66,11 @@ object ProtectionCoordinator {
     fun isOverlayVisible(): Boolean = overlayController?.isVisible() == true
 
     fun setOverlayTransparentForProbe(transparent: Boolean) {
-        overlayController?.setTemporarilyTransparentForProbe(transparent)
+        // Security hardening: never flash an active Protective Shield or Cool-Off overlay
+        // transparent (alpha = 0f), preventing screenshot timing bypasses.
+        if (!transparent) {
+            overlayController?.setTemporarilyTransparentForProbe(false)
+        }
     }
 
     fun init(context: Context) {
@@ -176,7 +181,10 @@ object ProtectionCoordinator {
             } else {
                 overlayController?.updateProtection(reason)
             }
-        } else if (decision.shouldHideOverlay && activeInterventionSource == InterventionSource.VISUAL_CONTENT) {
+        } else if (decision.shouldHideOverlay &&
+            activeInterventionSource == InterventionSource.VISUAL_CONTENT &&
+            overlayController?.isVisible() != true
+        ) {
             if (decision.directive == DecisionDirective.CLEAR_PROTECTION) {
                 overlayController?.fadeOutProtection()
                 LocalStorage.recordAutoRecovery(context)
@@ -208,10 +216,18 @@ object ProtectionCoordinator {
     ) {
         init(context)
         val nowMs = System.currentTimeMillis()
-        // Never dismiss our Take-a-Break chooser or In-Overlay Cool-Off session when our own
-        // GLOBAL_ACTION_HOME exits the offending social app to the launcher.
-        if (overlayController?.isInInteractiveBreakOrCoolOff() == true ||
+        // Never dismiss our Protective Shield or Cool-Off overlay for transient system utilities
+        // (OEM screenshot capture tools like com.miui.screenshot / smartcapture, SystemUI, toasts,
+        // volume panels, IMEs) or while our own shutdown/Cool-Off flow is active.
+        if (ActiveWindowResolver.isTransientSystemOverlay(newPackageName) ||
+            overlayController?.isInInteractiveBreakOrCoolOff() == true ||
             nowMs < suppressHideOnAppSwitchUntilMs
+        ) {
+            return
+        }
+        if (overlayController?.isVisible() == true &&
+            activeProtectedPackage.isNotBlank() &&
+            newPackageName == activeProtectedPackage
         ) {
             return
         }

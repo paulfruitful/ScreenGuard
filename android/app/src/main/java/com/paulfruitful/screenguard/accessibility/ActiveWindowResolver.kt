@@ -50,6 +50,28 @@ object ActiveWindowResolver {
         "com.mi.globalminusscreen",
         "com.mi.appfinder",
         "com.miui.screenrecorder",
+        "com.miui.screenshot",
+        "com.xiaomi.screenshot",
+        "com.miui.extraphoto",
+        "com.miui.notification",
+        "com.miui.contentextension",
+        "com.miui.accessibility",
+        "com.xiaomi.mirror",
+        "com.miui.mishare.connectivity",
+        "com.samsung.android.app.smartcapture",
+        "com.sec.android.app.screenshot",
+        "com.oplus.screenshot",
+        "com.coloros.screenshot",
+        "com.oneplus.screenshot",
+        "com.vivo.screenshot",
+        "com.bbk.screenshot",
+        "com.huawei.screenshot",
+        "com.hihonor.screenshot",
+        "com.transsion.screenshot",
+        "com.motorola.screenshot",
+        "com.asus.screenshot",
+        "com.android.permissioncontroller",
+        "com.google.android.permissioncontroller",
         "com.miui.Freeform",
         "com.miui.freeform",
         "com.miui.touchassistant"
@@ -76,7 +98,28 @@ object ActiveWindowResolver {
             lower.contains("inputmethod") ||
             lower.contains("keyboard") ||
             lower.contains("screenrecorder") ||
+            lower.contains("screenshot") ||
+            lower.contains("smartcapture") ||
+            lower.contains("screencapture") ||
+            lower.contains("screen_capture") ||
+            lower.contains("screen.capture") ||
+            lower.contains("longshot") ||
+            lower.contains("scrollshot") ||
             lower.endsWith(".overlay")
+    }
+
+    fun isTransientSystemClassName(className: String?): Boolean {
+        if (className.isNullOrBlank()) return false
+        val lower = className.lowercase()
+        return lower.contains("screenshot") ||
+            lower.contains("smartcapture") ||
+            lower.contains("screencapture") ||
+            lower.contains("volumedialog") ||
+            lower.contains("globalactions") ||
+            lower.contains("powermenu") ||
+            lower == "android.widget.toast" ||
+            lower.endsWith(".toast") ||
+            lower.contains("toast\$tn")
     }
 
     @Volatile
@@ -108,7 +151,12 @@ object ActiveWindowResolver {
             lastKnownPasswordFocused = false
         }
         val eventPkg = event.packageName?.toString()
-        if (eventPkg.isNullOrBlank() || isTransientSystemOverlay(eventPkg) || isSelfOverlayEvent(event)) {
+        val eventCls = event.className?.toString()
+        if (eventPkg.isNullOrBlank() ||
+            isTransientSystemOverlay(eventPkg) ||
+            isTransientSystemClassName(eventCls) ||
+            isSelfOverlayEvent(event)
+        ) {
             return ResolvedWindowContext(
                 packageName = fallbackPackage,
                 appLabel = getAppLabel(context, fallbackPackage),
@@ -118,16 +166,21 @@ object ActiveWindowResolver {
         }
         val isSelfMainActivity = eventPkg == SELF_PACKAGE &&
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            (event.className?.toString()?.contains("MainActivity", ignoreCase = true) == true)
+            (eventCls?.contains("MainActivity", ignoreCase = true) == true)
 
-        // Prevent background Xiaomi launcher (`com.miui.home`) or Google Discover minus-one pane
-        // (`com.google.android.googlequicksearchbox`) from hijacking foreground state via background
-        // TYPE_WINDOW_CONTENT_CHANGED events while the user is actively inside X/Twitter or Instagram!
+        val hasRealFallbackApp = fallbackPackage.isNotBlank() &&
+            fallbackPackage != "None" &&
+            !isLauncherPackage(fallbackPackage)
+
+        // Prevent background Xiaomi launcher (`com.miui.home`), Google Discover minus-one pane,
+        // or transient floating overlays/toasts firing TYPE_WINDOW_CONTENT_CHANGED from hijacking
+        // foreground state and dismissing an active Protective Shield!
         val canSwitchToEventPkg = when {
             eventPkg == fallbackPackage -> true
             eventPkg == SELF_PACKAGE -> isSelfMainActivity
             isLauncherPackage(eventPkg) -> event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             eventPkg == "com.google.android.googlequicksearchbox" -> false
+            hasRealFallbackApp -> event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             else -> true
         }
 

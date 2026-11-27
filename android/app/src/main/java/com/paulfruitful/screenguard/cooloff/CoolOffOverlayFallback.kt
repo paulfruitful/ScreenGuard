@@ -279,6 +279,11 @@ object CoolOffOverlayViews {
     ) {
         private val handler = Handler(Looper.getMainLooper())
         private val audioEngine = CoolOffAudioEngine(context.applicationContext)
+        private val voiceReader = CoolOffScriptureVoiceReader(
+            appContext = context.applicationContext,
+            onStateChanged = { state -> renderVoiceToggleButton(state) },
+            onSpeakingActiveChanged = { active -> audioEngine.setVoiceDucking(active) }
+        )
         private var session: CoolOffSessionState = if (forceNew) {
             CoolOffSessionManager.startFreshSession(context, durationMinutes)
         } else {
@@ -294,6 +299,7 @@ object CoolOffOverlayViews {
 
         private lateinit var timerText: TextView
         private lateinit var progressBar: ProgressBar
+        private lateinit var voiceToggleBtn: TextView
         private lateinit var muteBtn: TextView
         private lateinit var statusHint: TextView
         private lateinit var finishBtn: TextView
@@ -503,6 +509,33 @@ object CoolOffOverlayViews {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply { topMargin = dpInt(context, 5f) }
             })
+            voiceToggleBtn = TextView(context).apply {
+                text = "Preparing Bible Voice..."
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setTextColor(ROYAL_BLUE)
+                typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(context, 999f)
+                    setColor(Color.parseColor("#E6EEFC"))
+                    setStroke(dpInt(context, 1f), Color.parseColor("#BDD0F5"))
+                }
+                setPadding(dpInt(context, 16f), dpInt(context, 8f), dpInt(context, 16f), dpInt(context, 8f))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    gravity = Gravity.CENTER_HORIZONTAL
+                    topMargin = dpInt(context, 10f)
+                }
+                setOnClickListener {
+                    voiceReader.togglePauseResume()
+                }
+            }
+            scriptureBox.addView(voiceToggleBtn)
             activeSection.addView(scriptureBox)
 
             // Audio mute toggle
@@ -622,6 +655,7 @@ object CoolOffOverlayViews {
                 initialVolume = session.audioVolume,
                 initialMuted = muted
             )
+            voiceReader.loadAndStart(scripture, autoPlay = true)
             handler.post(tickRunnable)
             return scroll
         }
@@ -636,7 +670,60 @@ object CoolOffOverlayViews {
                     completedInteractions = completedStepIndices.size
                 )
             }
+            voiceReader.stopAndRelease()
             audioEngine.stopImmediately()
+        }
+
+        private fun renderVoiceToggleButton(state: VoiceReaderState) {
+            if (!::voiceToggleBtn.isInitialized) return
+            when (state) {
+                VoiceReaderState.INITIALIZING -> {
+                    voiceToggleBtn.visibility = View.VISIBLE
+                    voiceToggleBtn.text = "Preparing Bible Voice..."
+                    voiceToggleBtn.setTextColor(ROYAL_BLUE)
+                    voiceToggleBtn.background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#E6EEFC"))
+                        setStroke(dpInt(context, 1f), Color.parseColor("#BDD0F5"))
+                    }
+                }
+                VoiceReaderState.SPEAKING -> {
+                    voiceToggleBtn.visibility = View.VISIBLE
+                    voiceToggleBtn.text = "⏸  Pause Bible Voice"
+                    voiceToggleBtn.setTextColor(Color.WHITE)
+                    voiceToggleBtn.background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(ROYAL_BLUE)
+                    }
+                }
+                VoiceReaderState.PAUSED -> {
+                    voiceToggleBtn.visibility = View.VISIBLE
+                    voiceToggleBtn.text = "▶  Resume Bible Voice"
+                    voiceToggleBtn.setTextColor(ROYAL_BLUE)
+                    voiceToggleBtn.background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#E6EEFC"))
+                        setStroke(dpInt(context, 1f), Color.parseColor("#BDD0F5"))
+                    }
+                }
+                VoiceReaderState.COMPLETED -> {
+                    voiceToggleBtn.visibility = View.VISIBLE
+                    voiceToggleBtn.text = "↻  Replay Bible Verse"
+                    voiceToggleBtn.setTextColor(ROYAL_BLUE)
+                    voiceToggleBtn.background = GradientDrawable().apply {
+                        shape = GradientDrawable.RECTANGLE
+                        cornerRadius = dp(context, 999f)
+                        setColor(Color.parseColor("#E6EEFC"))
+                        setStroke(dpInt(context, 1f), Color.parseColor("#BDD0F5"))
+                    }
+                }
+                VoiceReaderState.UNAVAILABLE -> {
+                    voiceToggleBtn.visibility = View.GONE
+                }
+            }
         }
 
         private fun currentElapsed(): Int {
@@ -663,6 +750,7 @@ object CoolOffOverlayViews {
                 session = session.copy(elapsedSeconds = session.durationSeconds, isCompleted = true)
                 running = false
                 handler.removeCallbacks(tickRunnable)
+                voiceReader.stopAndRelease()
                 audioEngine.fadeOutAndStop()
                 activeSection.visibility = View.GONE
                 doneSection.visibility = View.VISIBLE

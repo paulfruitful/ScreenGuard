@@ -1,4 +1,4 @@
-# Screen Guard v1.6.4 — Release Notes
+# Screen Guard v1.6.5 — Release Notes
 
 **Browse Safe. Live Free.**  
 *Release Date: November 27, 2026 | Platform: Android 11–16 (32-bit & 64-bit ARM)*
@@ -7,26 +7,25 @@
 
 ## Overview
 
-Screen Guard v1.6.4 upgrades shield exit actions to cleanly shut down offending apps without triggering floating Picture-in-Picture mini-players, makes the unbypassable Protective Guard overlay Cool-Off Room the default everywhere, guarantees immediate re-blocking when sliding back to blacklisted pages from Recents, and adds custom user-managed Blocked Pages & Accounts in Settings.
+Screen Guard v1.6.5 adds an offline deep-bass male Bible verse voice reader inside the Cool-Off Room with instant Pause/Resume controls and smooth background music ducking, and closes a screenshot-timing vulnerability so taking a screenshot can never dismiss or flash the Protective Shield.
 
 ---
 
-## What's New in v1.6.4
+## What's New in v1.6.5
 
-### Clean App Shutdown (No Picture-in-Picture)
-- **Prevents Floating Video Mini-Players:** Tapping **Return to Safe Browsing**, **Cool Off**, or **Take a Break** now executes `BACK -> BACK -> HOME -> killBackgroundProcesses` while the opaque shield stays on screen — closing fullscreen video players and offending profiles before leaving the app so X, TikTok, Instagram, and browsers cannot minimize into a floating PiP player.
+### Cool-Off Room Bible Verse Voice Reader
+- **Slow Deep-Bass Male Voice:** Inside the Cool-Off Room, Screen Guard now reads the displayed Bible verse aloud at a calm, meditative pace using the deepest available offline male English TTS voice on your phone.
+- **Natural Spoken Scripture & Pause Control:** Formats scripture references naturally (e.g., "First Corinthians, chapter 10, verse 13"), pauses briefly between clauses, and lets you tap **Pause Bible Voice**, **Resume Bible Voice**, or **Replay Bible Verse** at any time.
+- **Smooth Calming Music Ducking:** Gently lowers the calming instrumental audio while the Bible verse is being spoken and swells it back smoothly when paused or finished.
+- **Cool-Off Room Only:** Voice reading only plays inside the Cool-Off Room and never speaks on the main Protective Shield overlay.
 
-### Unbypassable Protective Guard Cool-Off Room (Default)
-- **Default Everywhere:** The full-screen in-overlay **Protective Guard Cool-Off Room** (`TYPE_ACCESSIBILITY_OVERLAY`) is now the primary Cool-Off experience for Shield **Cool Off**, **Take a Break** custom durations (`1–60 min`), and Settings **Open Cool-Off Room**.
-- **Cannot Be Boycotted:** Remains locked across app switches, Recents, and screen lock/unlock until the countdown timer and reflection steps genuinely finish.
-
-### Instant Blacklist Blocking on Resume + Custom Blocked Pages
-- **Immediate Block on Resume from Recents:** Scans visible active-window text immediately whenever you switch or slide back into an app so blacklisted adult/OnlyFans profiles block right away every time.
-- **Custom Blocked Pages & Accounts in Settings:** Add your own `@handles`, creator names, or profile URLs (`x.com/...`, `instagram.com/...`, `tiktok.com/...`) under **Settings -> Blocked Pages & Accounts** for instant cross-app blocking (protected from impulsive removal when Uninstall Protection is locked).
+### Protective Shield Screenshot Hardening
+- **Blocks Screenshot Bypass Vulnerability:** Taking a screenshot on Xiaomi/HyperOS, Samsung, Vivo, Oppo/OnePlus, Huawei, or other Android devices no longer causes transient OEM screenshot windows (`com.miui.screenshot`, `smartcapture`, `com.vivo.screenshot`, etc.) to trigger a false app-switch and dismiss the Protective Shield.
+- **Zero Transparent Probe Flashing:** Disabled automatic background capture probes and temporary transparency while the Protective Shield or Cool-Off screen is active, preventing screenshot timing bypasses and saving battery.
 
 ---
 
 ## Privacy Guarantee
 
-- **100% On-Device Processing:** All visual safety detection, everyday-content verification, blacklist matching, Doomscroll tracking, Cool-Off exercises, and DNS filtering run locally on your device.
-- **Zero External Uploads:** No screenshots, video contents, messages, or custom blocklists ever leave your phone.
+- **100% On-Device Processing:** All visual safety detection, everyday-content verification, blacklist matching, Cool-Off voice reading, Doomscroll tracking, and DNS filtering run locally on your device.
+- **Zero External Uploads:** No screenshots, audio, video contents, messages, or custom blocklists ever leave your phone.

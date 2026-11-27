@@ -49,6 +49,9 @@ class CoolOffAudioEngine(private val appContext: Context) {
     @Volatile
     private var duckMultiplier: Float = 1.0f
 
+    @Volatile
+    private var voiceDuckTarget: Float = 1.0f
+
     private var workerThread: Thread? = null
     private var audioTrack: AudioTrack? = null
     private var focusRequest: AudioFocusRequest? = null
@@ -97,6 +100,11 @@ class CoolOffAudioEngine(private val appContext: Context) {
 
     fun setVolume(volume: Float) {
         userVolume = volume.coerceIn(0f, 1f)
+    }
+
+    /** Gently lowers calming instrumental volume while the Bible verse voice reader is speaking. */
+    fun setVoiceDucking(active: Boolean) {
+        voiceDuckTarget = if (active) 0.28f else 1.0f
     }
 
     fun fadeOutAndStop() {
@@ -162,9 +170,12 @@ class CoolOffAudioEngine(private val appContext: Context) {
             val chordDurationSec = 4.5
             val chordDurationSamples = (SAMPLE_RATE * chordDurationSec).toLong()
 
+            var currentVoiceDuck = 1.0f
+
             while (running.get()) {
                 val activeCategory = category
-                val baseGain = if (muted) 0f else (userVolume * duckMultiplier * 0.28f)
+                currentVoiceDuck += (voiceDuckTarget - currentVoiceDuck) * 0.14f
+                val baseGain = if (muted) 0f else (userVolume * duckMultiplier * currentVoiceDuck * 0.28f)
 
                 for (i in 0 until CHUNK_FRAMES) {
                     val t = sampleIndex.toDouble() / SAMPLE_RATE.toDouble()

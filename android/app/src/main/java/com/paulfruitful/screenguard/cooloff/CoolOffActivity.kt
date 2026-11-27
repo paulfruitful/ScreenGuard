@@ -118,6 +118,9 @@ class CoolOffActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var audioEngine: CoolOffAudioEngine
+    private lateinit var voiceReader: CoolOffScriptureVoiceReader
+    private var voiceStartedForScriptureRef: String? = null
+    private var userPausedVoice: Boolean = false
     private lateinit var session: CoolOffSessionState
     private lateinit var exercise: CoolOffExercise
     private lateinit var scripture: CoolOffScripture
@@ -145,6 +148,7 @@ class CoolOffActivity : Activity() {
     private lateinit var scripturePassageText: TextView
     private lateinit var scriptureContextText: TextView
     private lateinit var scripturePromptText: TextView
+    private lateinit var scriptureVoiceButton: TextView
     private lateinit var audioCategoryText: TextView
     private lateinit var muteButton: TextView
     private lateinit var volumeSeekBar: SeekBar
@@ -174,6 +178,11 @@ class CoolOffActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         audioEngine = CoolOffAudioEngine(applicationContext)
+        voiceReader = CoolOffScriptureVoiceReader(
+            appContext = applicationContext,
+            onStateChanged = { state -> renderScriptureVoiceButton(state) },
+            onSpeakingActiveChanged = { active -> audioEngine.setVoiceDucking(active) }
+        )
 
         val requestedDuration = if (intent.hasExtra(EXTRA_DURATION_MINUTES)) {
             intent.getIntExtra(EXTRA_DURATION_MINUTES, CoolOffPolicyConfig.DEFAULT_SESSION_DURATION_MINUTES)
@@ -202,6 +211,12 @@ class CoolOffActivity : Activity() {
                 initialVolume = session.audioVolume,
                 initialMuted = session.audioMuted
             )
+            if (voiceStartedForScriptureRef != scripture.reference) {
+                voiceStartedForScriptureRef = scripture.reference
+                voiceReader.loadAndStart(scripture, autoPlay = !userPausedVoice)
+            } else if (!userPausedVoice && voiceReader.getState() == VoiceReaderState.PAUSED) {
+                voiceReader.resume()
+            }
             handler.removeCallbacks(tickRunnable)
             handler.post(tickRunnable)
         }
@@ -211,11 +226,13 @@ class CoolOffActivity : Activity() {
         super.onPause()
         isCurrentlyForeground = false
         pauseTimerAndPersist()
+        voiceReader.pause()
         audioEngine.stopImmediately()
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(tickRunnable)
+        voiceReader.stopAndRelease()
         audioEngine.stopImmediately()
         super.onDestroy()
     }
@@ -547,6 +564,42 @@ class CoolOffActivity : Activity() {
             setPadding(dpInt(12f), dpInt(10f), dpInt(12f), dpInt(10f))
         }
         scriptureCard.addView(scripturePromptText)
+
+        scriptureVoiceButton = TextView(this).apply {
+            text = "Preparing Bible Voice..."
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextColor(colorRoyalBlue)
+            typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            background = pillDrawable(Color.parseColor("#E6EEFC"), Color.parseColor("#BDD0F5"))
+            setPadding(dpInt(16f), dpInt(9f), dpInt(16f), dpInt(9f))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dpInt(10f)
+            }
+            setOnClickListener {
+                when (voiceReader.getState()) {
+                    VoiceReaderState.SPEAKING -> {
+                        userPausedVoice = true
+                        voiceReader.pause()
+                    }
+                    VoiceReaderState.PAUSED, VoiceReaderState.COMPLETED -> {
+                        userPausedVoice = false
+                        voiceReader.resume()
+                    }
+                    VoiceReaderState.INITIALIZING -> {
+                        userPausedVoice = !userPausedVoice
+                        voiceReader.togglePauseResume()
+                    }
+                    VoiceReaderState.UNAVAILABLE -> Unit
+                }
+            }
+        }
+        scriptureCard.addView(scriptureVoiceButton)
         content.addView(scriptureCard)
 
         // Background Instrumental Audio Card
@@ -728,6 +781,10 @@ class CoolOffActivity : Activity() {
         scripturePassageText.text = "“${scripture.passage}”"
         scriptureContextText.text = scripture.contextExplanation
         scripturePromptText.text = "Reflection: ${scripture.reflectionPrompt}"
+        if (isCurrentlyForeground && voiceStartedForScriptureRef != scripture.reference) {
+            voiceStartedForScriptureRef = scripture.reference
+            voiceReader.loadAndStart(scripture, autoPlay = !userPausedVoice)
+        }
 
         audioCategoryText.text = "${session.audioCategory.displayName} · Offline loop"
         muteButton.text = if (session.audioMuted) "Unmute" else "Mute"
@@ -1004,8 +1061,42 @@ class CoolOffActivity : Activity() {
     }
 
     private fun showCompletionScreen() {
+        voiceReader.stopAndRelease()
         activeSessionScroll.visibility = View.GONE
         completionContainer.visibility = View.VISIBLE
+    }
+
+    private fun renderScriptureVoiceButton(state: VoiceReaderState) {
+        if (!::scriptureVoiceButton.isInitialized) return
+        when (state) {
+            VoiceReaderState.INITIALIZING -> {
+                scriptureVoiceButton.visibility = View.VISIBLE
+                scriptureVoiceButton.text = "Preparing Bible Voice..."
+                scriptureVoiceButton.setTextColor(colorRoyalBlue)
+                scriptureVoiceButton.background = pillDrawable(Color.parseColor("#E6EEFC"), Color.parseColor("#BDD0F5"))
+            }
+            VoiceReaderState.SPEAKING -> {
+                scriptureVoiceButton.visibility = View.VISIBLE
+                scriptureVoiceButton.text = "⏸  Pause Bible Voice"
+                scriptureVoiceButton.setTextColor(Color.WHITE)
+                scriptureVoiceButton.background = pillDrawable(colorRoyalBlue, colorRoyalBlue)
+            }
+            VoiceReaderState.PAUSED -> {
+                scriptureVoiceButton.visibility = View.VISIBLE
+                scriptureVoiceButton.text = "▶  Resume Bible Voice"
+                scriptureVoiceButton.setTextColor(colorRoyalBlue)
+                scriptureVoiceButton.background = pillDrawable(Color.parseColor("#E6EEFC"), Color.parseColor("#BDD0F5"))
+            }
+            VoiceReaderState.COMPLETED -> {
+                scriptureVoiceButton.visibility = View.VISIBLE
+                scriptureVoiceButton.text = "↻  Replay Bible Verse"
+                scriptureVoiceButton.setTextColor(colorRoyalBlue)
+                scriptureVoiceButton.background = pillDrawable(Color.parseColor("#E6EEFC"), Color.parseColor("#BDD0F5"))
+            }
+            VoiceReaderState.UNAVAILABLE -> {
+                scriptureVoiceButton.visibility = View.GONE
+            }
+        }
     }
 
     private fun navigateToSafeHome() {

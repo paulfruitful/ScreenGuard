@@ -332,7 +332,9 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
         if (ActiveWindowResolver.isSelfOverlayEvent(event)) return
 
         val eventPkg = event.packageName?.toString()
+        val eventCls = event.className?.toString()
         if (!eventPkg.isNullOrBlank() && ActiveWindowResolver.isTransientSystemOverlay(eventPkg)) return
+        if (ActiveWindowResolver.isTransientSystemClassName(eventCls)) return
 
         // Ingest inline event text/captions in < 0.05 ms (zero Binder IPC)
         val freshInlineText = ScreenTextContextAnalyzer.onAccessibilityEventInline(event)
@@ -575,6 +577,24 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                 handlePipelineOutcome(outcome, originEventAtNs, 0L)
                 return outcome
             }
+        }
+
+        if (!bypassSelfExclusion && ProtectionCoordinator.isOverlayVisible()) {
+            return ProcessedScreenshotOutcome(
+                succeeded = false,
+                originalWidth = 0,
+                originalHeight = 0,
+                processedWidth = 0,
+                processedHeight = 0,
+                captureDurationMs = 0L,
+                processingDurationMs = 0L,
+                captureMethod = "OVERLAY_ACTIVE_SKIP",
+                packageName = currentForegroundPackage,
+                windowId = currentWindowId,
+                errorCode = "OVERLAY_ACTIVE_SKIPPED",
+                classificationResult = null,
+                debugPreviewBase64 = null
+            )
         }
 
         if (!bypassSelfExclusion && currentForegroundPackage == SELF_PACKAGE) {
@@ -999,6 +1019,8 @@ class ScreenGuardAccessibilityService : AccessibilityService() {
                     if (!isScreenInteractive()) continue
                     val prefs = LocalStorage.getPreferences(applicationContext)
                     if (!prefs.protectionEnabled) continue
+                    // Never probe or flash the Protective Shield / Cool-Off screen while it is visible.
+                    if (ProtectionCoordinator.isOverlayVisible()) continue
                     if (frameScheduler.isFrameInFlight) continue
 
                     val elapsedSinceCapture = System.currentTimeMillis() - lastScreenshotTimestamp
