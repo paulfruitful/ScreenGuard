@@ -1122,7 +1122,37 @@ class ScreenGuardModule(
                     DnsFilterState.normalizeDomain(rawDomains.optString(i, ""))
                         ?.let { domains.add(it) }
                 }
+            } else {
+                domains.addAll(current.customDomains)
             }
+            val whitelisted = mutableListOf<String>()
+            val rawWhitelisted = obj.optJSONArray("whitelistedDomains")
+            if (rawWhitelisted != null) {
+                for (i in 0 until rawWhitelisted.length()) {
+                    DnsFilterState.normalizeDomain(rawWhitelisted.optString(i, ""))
+                        ?.let { whitelisted.add(it) }
+                }
+            } else {
+                whitelisted.addAll(current.whitelistedDomains)
+            }
+
+            val distinctWhitelisted = whitelisted.distinct()
+            val lockActive = AccountabilityManager.isLockActive(context)
+            if (lockActive) {
+                val newlyWhitelistedAdult = distinctWhitelisted.firstOrNull { domain ->
+                    domain !in current.whitelistedDomains &&
+                        com.paulfruitful.screenguard.dns.DnsStarterBlocklist.isKnownAdultDomain(domain)
+                }
+                if (newlyWhitelistedAdult != null) {
+                    promise.reject(
+                        "ERR_PROTECTION_LOCKED",
+                        "Known adult domains ($newlyWhitelistedAdult) cannot be whitelisted while Uninstall Protection is locked.",
+                    )
+                    return
+                }
+            }
+            val distinctBlocked = domains.distinct().filterNot { it in distinctWhitelisted }
+
             val profile = obj.optString("profile", current.profile)
             val rawHost = obj.optString("customHost", current.customHost).trim()
             val customHost = if (rawHost.isEmpty()) {
@@ -1141,7 +1171,8 @@ class ScreenGuardModule(
                     DnsFilterProfiles.CLOUDFLARE_FAMILY
                 },
                 customHost = customHost,
-                customDomains = domains.distinct(),
+                customDomains = distinctBlocked,
+                whitelistedDomains = distinctWhitelisted,
                 useStarterList = obj.optBoolean("useStarterList", current.useStarterList),
             )
             DnsFilterState.saveConfig(context, next)

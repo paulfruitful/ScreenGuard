@@ -1,5 +1,6 @@
 package com.paulfruitful.screenguard.dns
 
+import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicInteger
 
 /** Minimal IPv4/UDP/DNS packet handling for the local DNS filter. */
@@ -51,6 +52,15 @@ object DnsPacketProcessor {
         return if (labels.isEmpty()) null else labels.joinToString(".").lowercase()
     }
 
+    /** Extracts the 16-bit DNS QTYPE (e.g. 1=A, 28=AAAA, 65=HTTPS) from the first question. */
+    fun questionType(payload: ByteArray): Int {
+        val end = questionEndOffset(payload) ?: return 0
+        if (end < 4 || end > payload.size) return 0
+        val qTypeOffset = end - 4
+        return ((payload[qTypeOffset].toInt() and 0xFF) shl 8) or
+            (payload[qTypeOffset + 1].toInt() and 0xFF)
+    }
+
     fun questionEndOffset(payload: ByteArray): Int? {
         if (payload.size < 13) {
             return null
@@ -72,15 +82,49 @@ object DnsPacketProcessor {
         return null
     }
 
+    /** Returns true when the domain or any parent domain is explicitly whitelisted by the user. */
+    fun isWhitelisted(domain: String, config: DnsFilterConfig): Boolean {
+        if (config.whitelistedDomains.isEmpty()) return false
+        val normalized = domain.trim().lowercase()
+        return config.whitelistedDomains.any { allowed ->
+            normalized == allowed || normalized.endsWith(".$allowed")
+        }
+    }
+
+    /**
+     * Returns true when the domain should be locally blocked with NXDOMAIN.
+     * Whitelisted domains ALWAYS take precedence over local blocklists.
+     */
     fun isBlocked(domain: String, config: DnsFilterConfig): Boolean {
+        val normalized = domain.trim().lowercase()
+        if (isWhitelisted(normalized, config)) {
+            return false
+        }
         val entries = mutableListOf<String>()
         if (config.useStarterList) {
             entries.addAll(DnsStarterBlocklist.DOMAINS)
         }
         entries.addAll(config.customDomains)
         return entries.any { blocked ->
-            domain == blocked || domain.endsWith(".$blocked")
+            normalized == blocked || normalized.endsWith(".$blocked")
         }
+    }
+
+    /** Verifies that an upstream DNS reply matches the query's 16-bit transaction ID and QR=1 flag. */
+    fun isMatchingDnsResponse(queryPayload: ByteArray, responsePayload: ByteArray): Boolean {
+        if (queryPayload.size < 12 || responsePayload.size < 12) return false
+        val sameTxId = queryPayload[0] == responsePayload[0] && queryPayload[1] == responsePayload[1]
+        val isResponse = (responsePayload[2].toInt() and 0x80) != 0
+        return sameTxId && isResponse
+    }
+
+    /** Copies a cached DNS answer and rewrites its 2-byte transaction ID to match [queryPayload]. */
+    fun rewriteTransactionId(cachedAnswer: ByteArray, queryPayload: ByteArray): ByteArray? {
+        if (cachedAnswer.size < 12 || queryPayload.size < 2) return null
+        val copy = cachedAnswer.copyOf()
+        copy[0] = queryPayload[0]
+        copy[1] = queryPayload[1]
+        return copy
     }
 
     /** Builds an NXDOMAIN answer that mirrors the original question. */
@@ -98,9 +142,51 @@ object DnsPacketProcessor {
         return response
     }
 
+    /**
+     * Builds a SERVFAIL (RCODE=2) answer when all upstream resolvers are unreachable,
+     * allowing Android apps to fail fast cleanly instead of hanging on silent UDP timeouts.
+     */
+    fun buildServFailResponse(query: ByteArray): ByteArray? {
+        val end = questionEndOffset(query) ?: return null
+        val response = ByteArray(end)
+        query.copyInto(response, 0, 0, end)
+        // QR=1, RD=1, RA=1, RCODE=2 (SERVFAIL).
+        response[2] = 0x81.toByte()
+        response[3] = 0x82.toByte()
+        for (i in 6..11) {
+            response[i] = 0
+        }
+        return response
+    }
+
+    /**
+     * Parses a numeric IPv4 address (e.g. "1.1.1.3") without triggering any system DNS lookup,
+     * avoiding VPN self-deadlocks inside the forwarding loop.
+     */
+    fun parseIpv4Literal(host: String): InetAddress? {
+        val parts = host.trim().split('.')
+        if (parts.size != 4) return null
+        val bytes = ByteArray(4)
+        for (i in 0 until 4) {
+            val v = parts[i].toIntOrNull() ?: return null
+            if (v !in 0..255) return null
+            bytes[i] = v.toByte()
+        }
+        return try {
+            InetAddress.getByAddress(bytes)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Parses an IPv4 UDP packet and returns its DNS payload when destined to port 53. */
     fun parseQuery(packet: ByteArray): UdpDnsQuery? {
         if (packet.size < 28) {
+            return null
+        }
+        // Must be IPv4 (version nibble == 4)
+        val version = (packet[0].toInt() ushr 4) and 0x0F
+        if (version != 4) {
             return null
         }
         val ipHeaderLength = (packet[0].toInt() and 0x0F) * 4

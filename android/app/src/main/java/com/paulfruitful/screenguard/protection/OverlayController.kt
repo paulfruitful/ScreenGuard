@@ -23,6 +23,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import com.paulfruitful.screenguard.accessibility.ScreenGuardAccessibilityService
 import com.paulfruitful.screenguard.cooloff.CoolOffOverlayViews
@@ -92,6 +93,7 @@ class ScreenGuardOverlayController(
     private var inBreakOrCoolOffMode: Boolean = false
     private var activeCustomChildView: View? = null
     private var activeInOverlayCoolOff: CoolOffOverlayViews.InOverlayCoolOffController? = null
+    private var mainShieldScrollView: ScrollView? = null
     private var mainShieldCardView: LinearLayout? = null
 
     // View references updated in-place to avoid view recreation
@@ -123,6 +125,7 @@ class ScreenGuardOverlayController(
             if (isOverlayAttached && rootOverlayView != null) {
                 rootOverlayView?.animate()?.cancel()
                 rootOverlayView?.alpha = 1f
+                mainShieldScrollView?.visibility = View.VISIBLE
                 mainShieldCardView?.visibility = View.VISIBLE
                 bindReasonToViews(reason)
                 return@runOnMain
@@ -142,6 +145,7 @@ class ScreenGuardOverlayController(
             val root = rootOverlayView ?: return@runOnMain
             clearCustomModeLocked()
             inBreakOrCoolOffMode = true
+            mainShieldScrollView?.visibility = View.GONE
             mainShieldCardView?.visibility = View.GONE
             val chooser = CoolOffOverlayViews.buildTakeABreakChooserView(
                 context = root.context,
@@ -175,6 +179,7 @@ class ScreenGuardOverlayController(
             val root = rootOverlayView ?: return@runOnMain
             clearCustomModeLocked()
             inBreakOrCoolOffMode = true
+            mainShieldScrollView?.visibility = View.GONE
             mainShieldCardView?.visibility = View.GONE
             val controller = CoolOffOverlayViews.InOverlayCoolOffController(
                 context = root.context,
@@ -229,6 +234,7 @@ class ScreenGuardOverlayController(
         }
         activeCustomChildView = null
         inBreakOrCoolOffMode = false
+        mainShieldScrollView?.visibility = View.VISIBLE
         mainShieldCardView?.visibility = View.VISIBLE
     }
 
@@ -697,16 +703,28 @@ class ScreenGuardOverlayController(
         secondaryDismissButton = dismissBtn
         card.addView(dismissBtn)
 
-        val cardParams = FrameLayout.LayoutParams(
+        val scrollWrapper = ScrollView(context).apply {
+            isFillViewport = false
+            isVerticalScrollBarEnabled = false
+        }
+        val innerCardParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        scrollWrapper.addView(card, innerCardParams)
+
+        val scrollParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.WRAP_CONTENT,
             Gravity.CENTER
         ).apply {
             val marginH = dpInt(context, 24f)
-            setMargins(marginH, marginH, marginH, marginH)
+            val marginV = dpInt(context, 16f)
+            setMargins(marginH, marginV, marginH, marginV)
         }
+        mainShieldScrollView = scrollWrapper
         mainShieldCardView = card
-        root.addView(card, cardParams)
+        root.addView(scrollWrapper, scrollParams)
         return root
     }
 

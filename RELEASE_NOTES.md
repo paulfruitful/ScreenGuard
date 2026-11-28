@@ -1,31 +1,33 @@
-# Screen Guard v1.6.5 — Release Notes
+# Screen Guard v1.6.6 — Release Notes
 
 **Browse Safe. Live Free.**  
-*Release Date: November 27, 2026 | Platform: Android 11–16 (32-bit & 64-bit ARM)*
+*Release Date: November 28, 2026 | Platform: Android 11–16 (32-bit & 64-bit ARM)*
 
 ---
 
 ## Overview
 
-Screen Guard v1.6.5 adds an offline deep-bass male Bible verse voice reader inside the Cool-Off Room with instant Pause/Resume controls and smooth background music ducking, and closes a screenshot-timing vulnerability so taking a screenshot can never dismiss or flash the Protective Shield.
+Screen Guard v1.6.6 fixes intermittent local DNS dropouts and adds **Whitelisted Sites** so trusted domains always get through, prevents Bluetooth/Earphones system popups from bypassing excluded apps, makes the Protective Shield scrollable in landscape mode, and tightens visual false-positive guards on normal video and movie scenes.
 
 ---
 
-## What's New in v1.6.5
+## What's New in v1.6.6
 
-### Cool-Off Room Bible Verse Voice Reader
-- **Slow Deep-Bass Male Voice:** Inside the Cool-Off Room, Screen Guard now reads the displayed Bible verse aloud at a calm, meditative pace using the deepest available offline male English TTS voice on your phone.
-- **Natural Spoken Scripture & Pause Control:** Formats scripture references naturally (e.g., "First Corinthians, chapter 10, verse 13"), pauses briefly between clauses, and lets you tap **Pause Bible Voice**, **Resume Bible Voice**, or **Replay Bible Verse** at any time.
-- **Smooth Calming Music Ducking:** Gently lowers the calming instrumental audio while the Bible verse is being spoken and swells it back smoothly when paused or finished.
-- **Cool-Off Room Only:** Voice reading only plays inside the Cool-Off Room and never speaks on the main Protective Shield overlay.
+### Reliable DNS Filter + Whitelisted Sites
+- **No More DNS Blackouts:** Replaced the single blocking DNS socket with a 16-worker concurrent forwarder, fresh protected sockets per query, transaction-ID verification, fast-fail `SERVFAIL`, and a 45-second in-memory TTL cache.
+- **Automatic Failover:** Every preset now fails over automatically across primary, secondary, and tertiary family-safe resolvers (e.g., `1.1.1.3 -> 1.0.0.3 -> 94.140.14.15`).
+- **Whitelisted Sites (Always Allowed):** Add domains or URLs under **DNS Content Filter -> Whitelisted Sites** so legitimate sites always resolve cleanly (even if an upstream family DNS blocks them). Known adult domains remain protected when Uninstall Protection is locked.
 
-### Protective Shield Screenshot Hardening
-- **Blocks Screenshot Bypass Vulnerability:** Taking a screenshot on Xiaomi/HyperOS, Samsung, Vivo, Oppo/OnePlus, Huawei, or other Android devices no longer causes transient OEM screenshot windows (`com.miui.screenshot`, `smartcapture`, `com.vivo.screenshot`, etc.) to trigger a false app-switch and dismiss the Protective Shield.
-- **Zero Transparent Probe Flashing:** Disabled automatic background capture probes and temporary transparency while the Protective Shield or Cool-Off screen is active, preventing screenshot timing bypasses and saving battery.
+### Excluded-App & Landscape Shield Fixes
+- **Stops Earphones / Bluetooth Popup Hijacking:** Ignored Xiaomi/Android Bluetooth and audio accessory overlays (`com.xiaomi.bluetooth`, `com.miui.misound`, `com.miui.audiomonitor`, `com.android.bluetooth`) so connecting or adjusting earphones while using an excluded app (like Chatflix) never triggers a false scan over it.
+- **Scrollable Landscape Protective Shield:** Wrapped the Protective Shield card in a `ScrollView` so the Bible verse, **Return to Safe Browsing**, and **Cool Off** buttons stay reachable in landscape orientation.
+
+### Fewer False Positives on Normal Content
+- **Stronger Stage-2 Corroboration & Everyday-Scene Guards:** Prevented single-model `SUGGESTIVE` spikes on normal shirts, warm lighting, and movie frames from overriding safe Stage-2 scores without corroboration, expanded the everyday-scene verifier (suits, microphones, guitars/pianos, laptops/monitors/TVs, sports), and tightened pose/multi-frame confirmation gates.
 
 ---
 
 ## Privacy Guarantee
 
-- **100% On-Device Processing:** All visual safety detection, everyday-content verification, blacklist matching, Cool-Off voice reading, Doomscroll tracking, and DNS filtering run locally on your device.
-- **Zero External Uploads:** No screenshots, audio, video contents, messages, or custom blocklists ever leave your phone.
+- **100% On-Device Processing:** All visual safety detection, everyday-content verification, blacklist/whitelist matching, Cool-Off voice reading, and local DNS routing stay on your device.
+- **Zero External Uploads:** No screenshots, audio, browsing history, or custom lists are ever uploaded.

@@ -198,6 +198,8 @@ object EventBridge {
         Arguments.createMap().apply {
             val domains = Arguments.createArray()
             status.customDomains.forEach { domains.pushString(it) }
+            val whitelisted = Arguments.createArray()
+            status.whitelistedDomains.forEach { whitelisted.pushString(it) }
             putBoolean("active", status.active)
             putBoolean("prepared", status.prepared)
             putString("profile", status.profile)
@@ -205,6 +207,8 @@ object EventBridge {
             putString("upstream", status.upstream)
             putArray("customDomains", domains)
             putInt("customDomainCount", status.customDomainCount)
+            putArray("whitelistedDomains", whitelisted)
+            putInt("whitelistedDomainCount", status.whitelistedDomainCount)
             putBoolean("useStarterList", status.useStarterList)
             putDouble("blockedQueries", status.blockedQueries.toDouble())
             putDouble("allowedQueries", status.allowedQueries.toDouble())

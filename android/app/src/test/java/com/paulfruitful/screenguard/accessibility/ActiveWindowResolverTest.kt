@@ -23,7 +23,11 @@ class ActiveWindowResolverTest {
             "com.transsion.screenshot",
             "com.miui.screenrecorder",
             "com.android.systemui",
-            "com.vendor.custom.screencapture"
+            "com.vendor.custom.screencapture",
+            "com.xiaomi.bluetooth",
+            "com.android.bluetooth",
+            "com.miui.misound",
+            "com.miui.audiomonitor"
         )
         for (pkg in screenshotPackages) {
             assertTrue("Expected $pkg to be ignored as transient overlay", ActiveWindowResolver.isTransientSystemOverlay(pkg))

@@ -21,8 +21,8 @@ android {
         applicationId "com.paulfruitful.screenguard"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 55
-        versionName "1.6.5"
+        versionCode 56
+        versionName "1.6.6"
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"

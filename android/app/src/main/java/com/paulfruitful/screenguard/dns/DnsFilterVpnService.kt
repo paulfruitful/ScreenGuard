@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import com.paulfruitful.screenguard.MainActivity
 import com.paulfruitful.screenguard.accessibility.AccessibilityDisconnectAlertManager
@@ -21,15 +22,32 @@ import java.io.FileOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Local DNS filter implemented as a VpnService.
  *
- * Only DNS queries addressed to the VPN's own DNS server are handled. The builder does NOT
- * add a 0.0.0.0/0 route, so all non-DNS traffic continues over the normal cellular/Wi-Fi
- * connection and is never read by this service. Activation always requires the Android VPN
- * consent dialog; the app cannot enable it silently.
+ * Only DNS queries addressed to the VPN's own DNS server (10.0.0.1/32) are handled. The builder
+ * does NOT add a 0.0.0.0/0 route, so all non-DNS traffic continues over the normal cellular/Wi-Fi
+ * connection and is never read by this service.
+ *
+ * Reliability architecture:
+ * - Concurrent forwarding worker pool (16 threads) so slow queries never head-of-line block
+ *   other domains.
+ * - Fresh protected [DatagramSocket] per upstream attempt so Wi-Fi/cellular switches and Doze
+ *   transitions never leave a stale socket bound to a dead interface, and late UDP replies can
+ *   never desync subsequent queries.
+ * - DNS transaction ID verification on every upstream response.
+ * - Automatic primary -> secondary -> tertiary upstream failover with crisp timeouts.
+ * - Explicitly whitelisted domains bypass local blocklists and route through unfiltered DNS so
+ *   over-blocking by family resolvers never breaks user-allowed sites.
+ * - Lightweight 45-second in-memory TTL cache (flushed immediately on config changes).
  */
 class DnsFilterVpnService : VpnService() {
 
@@ -38,6 +56,12 @@ class DnsFilterVpnService : VpnService() {
         const val ACTION_STOP = "com.paulfruitful.screenguard.dns.STOP"
         private const val CHANNEL_ID = "screenguard_dns_filter"
         private const val NOTIFICATION_ID = 4101
+
+        private const val WORKER_POOL_SIZE = 16
+        private const val MAX_IN_FLIGHT_QUERIES = 64
+        private const val CACHE_TTL_MS = 45_000L
+        private const val CACHE_MAX_ENTRIES = 256
+        private val UPSTREAM_TIMEOUTS_MS = intArrayOf(1200, 1500, 1800)
 
         /**
          * Automatically starts the DNS filter VPN service if the user has already granted
@@ -66,9 +90,25 @@ class DnsFilterVpnService : VpnService() {
         }
     }
 
+    private data class CachedDnsEntry(
+        val answerPayload: ByteArray,
+        val expiresAtElapsedMs: Long,
+    )
+
     private val running = AtomicBoolean(false)
+    private val tunWriteLock = Any()
+    private val inFlightPermits = Semaphore(MAX_IN_FLIGHT_QUERIES)
+    private val dnsCache = ConcurrentHashMap<String, CachedDnsEntry>()
+    private val cacheGeneration = AtomicLong(0L)
+    private val resolvedHostCache = ConcurrentHashMap<String, InetAddress>()
+    private val workerThreadId = AtomicInteger(1)
+
+    @Volatile
     private var tunnel: ParcelFileDescriptor? = null
-    private var worker: Thread? = null
+    @Volatile
+    private var tunOutput: FileOutputStream? = null
+    private var readerThread: Thread? = null
+    private var forwardExecutor: ExecutorService? = null
     private var accessibilityWatchdog: Thread? = null
 
     override fun onCreate() {
@@ -132,8 +172,16 @@ class DnsFilterVpnService : VpnService() {
         running.set(false)
         accessibilityWatchdog?.interrupt()
         accessibilityWatchdog = null
-        worker?.interrupt()
-        worker = null
+        readerThread?.interrupt()
+        readerThread = null
+        try {
+            forwardExecutor?.shutdownNow()
+        } catch (_: Exception) {
+        }
+        forwardExecutor = null
+        dnsCache.clear()
+        resolvedHostCache.clear()
+        tunOutput = null
         try {
             tunnel?.close()
         } catch (_: Exception) {
@@ -145,17 +193,29 @@ class DnsFilterVpnService : VpnService() {
     }
 
     private fun startFilter() {
-        worker = Thread(
+        val executor = Executors.newFixedThreadPool(WORKER_POOL_SIZE) { runnable ->
+            Thread(runnable, "screenguard-dns-worker-${workerThreadId.getAndIncrement()}").apply {
+                isDaemon = true
+            }
+        }
+        forwardExecutor = executor
+
+        readerThread = Thread(
             {
                 DnsFilterState.loadConfig(this)
-                var socket: DatagramSocket? = null
+                cacheGeneration.set(DnsFilterState.currentConfigGeneration)
                 try {
                     val builder = Builder()
                         .setSession(getString(R.string.dns_filter_session_name))
+                        .setMtu(1500)
+                        .setBlocking(true)
                         .addAddress(DnsPacketProcessor.TUN_ADDRESS, DnsPacketProcessor.TUN_PREFIX)
                         // Route only the virtual DNS server IP into tun0; never 0.0.0.0/0.
                         .addRoute(DnsPacketProcessor.DNS_ADDRESS, 32)
                         .addDnsServer(DnsPacketProcessor.DNS_ADDRESS)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        builder.setMetered(false)
+                    }
                     val pfd = builder.establish()
                     if (pfd == null) {
                         DnsFilterState.serviceRunning = false
@@ -165,79 +225,58 @@ class DnsFilterVpnService : VpnService() {
                         return@Thread
                     }
                     tunnel = pfd
+                    val input = FileInputStream(pfd.fileDescriptor)
+                    val output = FileOutputStream(pfd.fileDescriptor)
+                    tunOutput = output
+
                     DnsFilterState.serviceRunning = true
                     DnsFilterState.mark("FILTER_STARTED")
                     EventBridge.emitDnsFilterStatus(DnsFilterState.status(this))
 
-                    socket = DatagramSocket()
-                    // Protect the upstream socket so it is not routed back into our tunnel.
-                    protect(socket)
-                    socket.soTimeout = 3000
-
-                    val input = FileInputStream(pfd.fileDescriptor)
-                    val output = FileOutputStream(pfd.fileDescriptor)
-                    val buffer = ByteArray(65535)
+                    val buffer = ByteArray(4096)
+                    var consecutiveReadErrors = 0
 
                     while (running.get()) {
                         val count = try {
-                            input.read(buffer)
-                        } catch (e: Exception) {
-                            if (running.get()) {
+                            val n = input.read(buffer)
+                            consecutiveReadErrors = 0
+                            n
+                        } catch (_: Exception) {
+                            if (!running.get()) break
+                            consecutiveReadErrors++
+                            if (consecutiveReadErrors >= 3) {
                                 DnsFilterState.mark("TUN_READ_FAILED")
+                                break
                             }
-                            break
+                            try {
+                                Thread.sleep(150L)
+                            } catch (_: InterruptedException) {
+                                break
+                            }
+                            continue
                         }
                         if (count <= 0) {
                             continue
                         }
                         val query = DnsPacketProcessor.parseQuery(buffer.copyOf(count))
                             ?: continue
-                        val domain = DnsPacketProcessor.questionName(query.payload)
-                        val config = DnsFilterState.currentConfig
-                        val upstream =
-                            DnsFilterProfiles.upstreamFor(config.profile, config.customHost)
-
-                        if (domain != null && DnsPacketProcessor.isBlocked(domain, config)) {
-                            val answer = DnsPacketProcessor.buildNxDomainResponse(query.payload)
-                            if (answer != null) {
-                                output.write(DnsPacketProcessor.buildAnswerPacket(query, answer))
-                                DnsFilterState.bumpBlocked()
-                            }
-                            continue
-                        }
-
-                        try {
-                            val request = DatagramPacket(
-                                query.payload,
-                                query.payload.size,
-                                InetAddress.getByName(upstream),
-                                53,
-                            )
-                            socket.send(request)
-                            val responseBuffer = ByteArray(65535)
-                            val response = DatagramPacket(responseBuffer, responseBuffer.size)
-                            socket.receive(response)
-                            val answer = response.data.copyOfRange(
-                                response.offset,
-                                response.offset + response.length,
-                            )
-                            output.write(DnsPacketProcessor.buildAnswerPacket(query, answer))
-                            DnsFilterState.bumpAllowed()
-                        } catch (e: Exception) {
-                            DnsFilterState.bumpFailed()
-                        }
+                        dispatchQuery(query, executor)
                     }
                     try {
                         input.close()
                         output.close()
                     } catch (_: Exception) {
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     DnsFilterState.mark("FILTER_ERROR")
                 } finally {
+                    tunOutput = null
                     try {
-                        socket?.close()
+                        executor.shutdownNow()
                     } catch (_: Exception) {
+                    }
+                    if (forwardExecutor === executor) {
+                        forwardExecutor = null
                     }
                     try {
                         tunnel?.close()
@@ -250,9 +289,199 @@ class DnsFilterVpnService : VpnService() {
                     stopSelf()
                 }
             },
-            "screenguard-dns-filter",
+            "screenguard-dns-reader",
         )
-        worker?.start()
+        readerThread?.start()
+    }
+
+    private fun dispatchQuery(
+        query: DnsPacketProcessor.UdpDnsQuery,
+        executor: ExecutorService,
+    ) {
+        val currentGen = DnsFilterState.currentConfigGeneration
+        if (cacheGeneration.getAndSet(currentGen) != currentGen) {
+            dnsCache.clear()
+        }
+
+        val config = DnsFilterState.currentConfig
+        val domain = DnsPacketProcessor.questionName(query.payload)
+        val whitelisted = domain != null && DnsPacketProcessor.isWhitelisted(domain, config)
+
+        // Fast-path 1: local blocklist (whitelisted domains ALWAYS bypass local blocks).
+        if (!whitelisted && domain != null && DnsPacketProcessor.isBlocked(domain, config)) {
+            val answer = DnsPacketProcessor.buildNxDomainResponse(query.payload)
+            if (answer != null) {
+                writePacketToTun(DnsPacketProcessor.buildAnswerPacket(query, answer))
+                DnsFilterState.bumpBlocked()
+            }
+            return
+        }
+
+        // Fast-path 2: in-memory TTL cache for recent safe lookups.
+        val qType = DnsPacketProcessor.questionType(query.payload)
+        val cacheKey = if (domain != null) {
+            "$domain|$qType|$whitelisted|${config.profile}|${config.customHost}"
+        } else {
+            null
+        }
+        if (cacheKey != null) {
+            val cached = dnsCache[cacheKey]
+            val nowMs = SystemClock.elapsedRealtime()
+            if (cached != null && nowMs < cached.expiresAtElapsedMs) {
+                val rewritten = DnsPacketProcessor.rewriteTransactionId(
+                    cached.answerPayload,
+                    query.payload,
+                )
+                if (rewritten != null) {
+                    writePacketToTun(DnsPacketProcessor.buildAnswerPacket(query, rewritten))
+                    DnsFilterState.bumpAllowed()
+                    return
+                }
+            } else if (cached != null) {
+                dnsCache.remove(cacheKey)
+            }
+        }
+
+        // Fast-path 3: dispatch upstream forwarding concurrently without blocking tun0 reads.
+        if (!inFlightPermits.tryAcquire()) {
+            // Too many simultaneous stalled queries; fail fast with SERVFAIL so clients retry cleanly.
+            DnsPacketProcessor.buildServFailResponse(query.payload)?.let { servFail ->
+                writePacketToTun(DnsPacketProcessor.buildAnswerPacket(query, servFail))
+            }
+            DnsFilterState.bumpFailed()
+            return
+        }
+
+        try {
+            executor.execute {
+                try {
+                    forwardQueryWithFailover(
+                        query = query,
+                        config = config,
+                        whitelisted = whitelisted,
+                        cacheKey = cacheKey,
+                    )
+                } finally {
+                    inFlightPermits.release()
+                }
+            }
+        } catch (_: Exception) {
+            inFlightPermits.release()
+        }
+    }
+
+    private fun forwardQueryWithFailover(
+        query: DnsPacketProcessor.UdpDnsQuery,
+        config: DnsFilterConfig,
+        whitelisted: Boolean,
+        cacheKey: String?,
+    ) {
+        if (!running.get()) return
+
+        // Whitelisted domains route through unfiltered DNS so upstream family filters cannot
+        // over-block sites the user explicitly allowed.
+        val upstreams = if (whitelisted) {
+            DnsFilterProfiles.UNFILTERED_WHITELIST_UPSTREAMS
+        } else {
+            DnsFilterProfiles.upstreamsFor(config.profile, config.customHost)
+        }
+
+        for (index in upstreams.indices) {
+            if (!running.get()) return
+            val host = upstreams[index]
+            val timeoutMs = UPSTREAM_TIMEOUTS_MS[index.coerceAtMost(UPSTREAM_TIMEOUTS_MS.lastIndex)]
+            val answer = querySingleUpstream(query.payload, host, timeoutMs)
+            if (answer != null) {
+                writePacketToTun(DnsPacketProcessor.buildAnswerPacket(query, answer))
+                DnsFilterState.bumpAllowed()
+                // Cache clean NOERROR (RCODE=0) responses for fast repeat resolution.
+                val rcode = answer[3].toInt() and 0x0F
+                if (cacheKey != null && rcode == 0 && answer.size <= 1500) {
+                    if (dnsCache.size >= CACHE_MAX_ENTRIES) {
+                        dnsCache.clear()
+                    }
+                    dnsCache[cacheKey] = CachedDnsEntry(
+                        answerPayload = answer,
+                        expiresAtElapsedMs = SystemClock.elapsedRealtime() + CACHE_TTL_MS,
+                    )
+                }
+                return
+            }
+        }
+
+        // All upstream servers failed (e.g. offline/no signal): send SERVFAIL so apps fail fast
+        // instead of freezing on silent UDP timeouts.
+        DnsPacketProcessor.buildServFailResponse(query.payload)?.let { servFail ->
+            writePacketToTun(DnsPacketProcessor.buildAnswerPacket(query, servFail))
+        }
+        DnsFilterState.bumpFailed()
+    }
+
+    /**
+     * Opens a fresh, VPN-protected UDP socket for a single upstream attempt.
+     * Using a dedicated socket per query guarantees:
+     * 1. Automatic binding to the current active Wi-Fi/cellular interface after network switches.
+     * 2. Zero cross-query stale-reply poisoning when an earlier query arrives late.
+     */
+    private fun querySingleUpstream(
+        queryPayload: ByteArray,
+        upstreamHost: String,
+        timeoutMs: Int,
+    ): ByteArray? {
+        val address = resolveUpstreamAddress(upstreamHost) ?: return null
+        var socket: DatagramSocket? = null
+        return try {
+            socket = DatagramSocket()
+            if (!protect(socket)) {
+                return null
+            }
+            socket.soTimeout = timeoutMs
+            val request = DatagramPacket(queryPayload, queryPayload.size, address, 53)
+            socket.send(request)
+
+            val responseBuffer = ByteArray(4096)
+            val response = DatagramPacket(responseBuffer, responseBuffer.size)
+            socket.receive(response)
+            val answer = response.data.copyOfRange(
+                response.offset,
+                response.offset + response.length,
+            )
+            if (DnsPacketProcessor.isMatchingDnsResponse(queryPayload, answer)) {
+                answer
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            try {
+                socket?.close()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun resolveUpstreamAddress(host: String): InetAddress? {
+        DnsPacketProcessor.parseIpv4Literal(host)?.let { return it }
+        resolvedHostCache[host]?.let { return it }
+        return try {
+            val resolved = InetAddress.getByName(host)
+            resolvedHostCache[host] = resolved
+            resolved
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun writePacketToTun(packet: ByteArray) {
+        val out = tunOutput ?: return
+        synchronized(tunWriteLock) {
+            if (!running.get()) return
+            try {
+                out.write(packet)
+            } catch (_: Exception) {
+            }
+        }
     }
 
     /**

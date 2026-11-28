@@ -454,8 +454,8 @@ class LiteRtNsfwClassifier(
                     val centerSuggestiveOrHentaiConfirmed =
                         // Clothed thirst traps, suggestive squats & twerking challenges on clean video crop
                         (centerS1.porn >= 0.62f && centerPornSexy >= 0.68f) ||
-                            (centerS1.sexy >= 0.64f) ||
-                            (centerPornSexy >= 0.74f && centerS1.sexy >= 0.22f) ||
+                            (centerS1.sexy >= 0.72f && origS1.neutral < 0.75f) ||
+                            (centerPornSexy >= 0.76f && centerS1.sexy >= 0.26f) ||
                             // Animated porn, hentai & erotic line-art/drawings on clean media crop
                             (centerS1.hentai >= 0.48f)
 
@@ -886,10 +886,13 @@ class LiteRtNsfwClassifier(
 
             // Dual-model disagreement guard for real photos: Yahoo OpenNSFW ResNet-50 was trained on
             // bare-skin nudity and outputs < 0.45 on clothed thirst traps & twerking challenges.
-            // Route clothed suggestive visual signals to SUGGESTIVE (confirmed over 2-3 frames / ~2s
-            // and protected by Face/NLP vetoes) rather than discarding them as NON_EXPLICIT.
+            // Require strong Stage 1 confidence (>= 0.78) OR partial Stage 2 / text corroboration
+            // before overriding Stage 2 as SUGGESTIVE, eliminating false positives on normal shirts/lighting.
             s2Triggered && s2Nsfw < 0.45f && !hasExplicitTextContext -> {
-                if (isStrongClothedSuggestive) {
+                val corroboratedSuggestive =
+                    isStrongClothedSuggestive &&
+                        (pSexy >= 0.78f || s2Nsfw >= 0.16f || textSignal.adultScore >= 0.25f)
+                if (corroboratedSuggestive) {
                     val clothedConf = maxOf(
                         pSexy,
                         (0.95f * pPorn + 0.75f * pSexy).coerceIn(0f, 0.94f)

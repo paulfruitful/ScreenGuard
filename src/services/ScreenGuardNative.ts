@@ -268,10 +268,12 @@ export const DEFAULT_DNS_FILTER_STATUS: DnsFilterStatus = {
   active: false,
   prepared: false,
   profile: 'CLOUDFLARE_FAMILY',
-  profileLabel: 'Cloudflare Family (1.1.1.3)',
+  profileLabel: 'Cloudflare Family (1.1.1.3 / 1.0.0.3)',
   upstream: '1.1.1.3',
   customDomains: [],
   customDomainCount: 0,
+  whitelistedDomains: [],
+  whitelistedDomainCount: 0,
   useStarterList: true,
   blockedQueries: 0,
   allowedQueries: 0,
@@ -279,7 +281,7 @@ export const DEFAULT_DNS_FILTER_STATUS: DnsFilterStatus = {
   lastEvent: 'NONE',
   lastEventTimestampMs: 0,
   note:
-    'Local DNS filter only: DNS queries go through this app, all other app traffic uses the normal connection. Apps using their own encrypted DNS or hardcoded IPs, or Android Private DNS, can bypass it.',
+    'Local DNS filter only: DNS queries go through this app with automatic primary/backup failover. Whitelisted sites resolve directly through unfiltered DNS so legitimate sites stay accessible.',
 };
 
 export const DEFAULT_COMPATIBILITY_TARGETS: AppCompatibilityRecord[] = [
@@ -392,6 +394,9 @@ function ensureNativeModule(): ScreenGuardNativeModuleSpec {
 
 function normalizeDnsStatus(raw: DnsFilterStatus): DnsFilterStatus {
   const domains = Array.isArray(raw?.customDomains) ? raw.customDomains : [];
+  const whitelisted = Array.isArray(raw?.whitelistedDomains)
+    ? raw.whitelistedDomains
+    : [];
   return {
     ...DEFAULT_DNS_FILTER_STATUS,
     ...raw,
@@ -400,6 +405,11 @@ function normalizeDnsStatus(raw: DnsFilterStatus): DnsFilterStatus {
       typeof raw?.customDomainCount === 'number'
         ? raw.customDomainCount
         : domains.length,
+    whitelistedDomains: whitelisted,
+    whitelistedDomainCount:
+      typeof raw?.whitelistedDomainCount === 'number'
+        ? raw.whitelistedDomainCount
+        : whitelisted.length,
   };
 }
 

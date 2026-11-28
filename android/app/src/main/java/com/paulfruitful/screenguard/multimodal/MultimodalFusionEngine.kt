@@ -183,9 +183,9 @@ object MultimodalFusionEngine {
                 !ctx.isTalkingHeadPortrait &&
                 !nlpSaysNonSexual &&
                 !(c.available && c.benignNonSexualVisualContext) &&
-                (ctx.clothedSuggestivePoseScore >= 0.58f ||
-                    (ctx.clothedSuggestivePoseScore >= 0.46f &&
-                        (v.sexyScore >= 0.20f || nlp.suggestivePromoProb >= 0.45f || ctx.hipOscillationScore >= 0.30f)))
+                (ctx.clothedSuggestivePoseScore >= 0.68f ||
+                    (ctx.clothedSuggestivePoseScore >= 0.56f &&
+                        (v.sexyScore >= 0.28f || nlp.suggestivePromoProb >= 0.50f || ctx.hipOscillationScore >= 0.35f)))
 
         if (poseIndicatesSuggestive &&
             (v.predictedCategory == ContentCategory.NON_EXPLICIT.name ||

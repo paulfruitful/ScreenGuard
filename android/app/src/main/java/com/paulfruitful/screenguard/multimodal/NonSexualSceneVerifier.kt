@@ -94,7 +94,21 @@ object NonSexualSceneVerifier {
         817, // sports car
         829, // streetcar
         864, // tow truck
-        867  // trailer truck
+        867, // trailer truck
+        402, // acoustic guitar
+        430, // basketball
+        527, // desktop computer
+        546, // electric guitar
+        579, // grand piano
+        620, // laptop
+        650, // microphone
+        664, // monitor
+        742, // printer
+        805, // soccer ball
+        834, // suit
+        851, // television
+        852, // tennis ball
+        881  // upright piano
     )
 
     private val lock = Any()

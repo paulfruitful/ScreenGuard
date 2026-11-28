@@ -31,34 +31,43 @@ const PROFILES: {key: DnsFilterProfile; title: string; detail: string}[] = [
   {
     key: 'CLOUDFLARE_FAMILY',
     title: 'Cloudflare Family',
-    detail: '1.1.1.3 · blocks malware and adult domains',
+    detail: '1.1.1.3 (+ 1.0.0.3 failover) · blocks malware and adult domains',
   },
   {
     key: 'ADGUARD_FAMILY',
     title: 'AdGuard Family',
-    detail: '94.140.14.15 · adult content and trackers',
+    detail: '94.140.14.15 (+ 94.140.15.16 failover) · adult content and trackers',
   },
   {
     key: 'CLEANBROWSING_ADULT',
     title: 'CleanBrowsing Adult',
-    detail: '185.228.168.10 · adult content filter',
+    detail: '185.228.168.10 (+ 185.228.169.11 failover) · adult content filter',
   },
   {
     key: 'OPENDNS_FAMILYSHIELD',
     title: 'OpenDNS FamilyShield',
-    detail: '208.67.222.123 · preconfigured adult blocking',
+    detail: '208.67.222.123 (+ 208.67.220.123 failover) · preconfigured adult blocking',
   },
   {
     key: 'CUSTOM',
     title: 'Custom DNS server',
-    detail: 'Use your own DNS resolver address',
+    detail: 'Use your own DNS resolver address (with automatic fallback)',
   },
 ];
 
 function parseDomains(input: string): string[] {
   return input
     .split(/[\s,;]+/)
-    .map(item => item.trim().toLowerCase().replace(/^www\./, ''))
+    .map(item =>
+      item
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/[/?#].*$/, '')
+        .replace(/:\d+$/, '')
+        .replace(/^www\./, '')
+        .replace(/\.+$/, ''),
+    )
     .filter(item => /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(item));
 }
 
@@ -87,6 +96,8 @@ export function DnsFilterScreen({
     status.profile === 'CUSTOM' ? status.upstream : '',
   );
   const [domainText, setDomainText] = useState('');
+  const [whitelistText, setWhitelistText] = useState('');
+  const [whitelistError, setWhitelistError] = useState<string | null>(null);
   const [draftStarter, setDraftStarter] = useState(status.useStarterList);
 
   const runAction = async (action: () => Promise<unknown>) => {
@@ -103,6 +114,8 @@ export function DnsFilterScreen({
       profile: overrides.profile ?? draftProfile,
       customHost: overrides.customHost ?? draftHost,
       customDomains: overrides.customDomains ?? status.customDomains,
+      whitelistedDomains:
+        overrides.whitelistedDomains ?? status.whitelistedDomains,
       useStarterList: overrides.useStarterList ?? draftStarter,
     };
     await onUpdateConfig(config);
@@ -127,8 +140,14 @@ export function DnsFilterScreen({
       return;
     }
     const nextDomains = Array.from(new Set([...status.customDomains, ...parsed]));
+    const nextWhitelist = status.whitelistedDomains.filter(
+      item => !parsed.includes(item),
+    );
     void runAction(async () => {
-      await saveConfig({customDomains: nextDomains});
+      await saveConfig({
+        customDomains: nextDomains,
+        whitelistedDomains: nextWhitelist,
+      });
       setDomainText('');
     });
   };
@@ -136,6 +155,42 @@ export function DnsFilterScreen({
   const removeDomain = (domain: string) => {
     const nextDomains = status.customDomains.filter(item => item !== domain);
     void runAction(() => saveConfig({customDomains: nextDomains}));
+  };
+
+  const addWhitelistedDomains = () => {
+    const parsed = parseDomains(whitelistText);
+    if (parsed.length === 0) {
+      setWhitelistError('Enter a valid domain such as example.com or https://news.site');
+      return;
+    }
+    setWhitelistError(null);
+    const nextWhitelist = Array.from(
+      new Set([...status.whitelistedDomains, ...parsed]),
+    );
+    const nextBlocked = status.customDomains.filter(
+      item => !parsed.includes(item),
+    );
+    void runAction(async () => {
+      try {
+        await saveConfig({
+          whitelistedDomains: nextWhitelist,
+          customDomains: nextBlocked,
+        });
+        setWhitelistText('');
+      } catch (err: any) {
+        setWhitelistError(
+          err?.message || 'Unable to whitelist that domain right now.',
+        );
+      }
+    });
+  };
+
+  const removeWhitelistedDomain = (domain: string) => {
+    setWhitelistError(null);
+    const nextWhitelist = status.whitelistedDomains.filter(
+      item => item !== domain,
+    );
+    void runAction(() => saveConfig({whitelistedDomains: nextWhitelist}));
   };
 
   const toggleStarterList = () => {
@@ -167,7 +222,11 @@ export function DnsFilterScreen({
           <View style={styles.statusRow}>
             <View>
               <Text style={styles.cardTitle}>Filter Status</Text>
-              <Text style={[styles.statusBadge, status.active ? styles.badgeActive : styles.badgeOff]}>
+              <Text
+                style={[
+                  styles.statusBadge,
+                  status.active ? styles.badgeActive : styles.badgeOff,
+                ]}>
                 {status.active ? 'ACTIVE' : 'OFF'}
               </Text>
             </View>
@@ -176,12 +235,27 @@ export function DnsFilterScreen({
             </Text>
           </View>
 
-          <InfoRow label="Permission" value={status.prepared ? 'VPN approved' : 'Needs approval'} />
-          <InfoRow label="Resolver" value={status.upstream} />
-          <InfoRow label="Custom domains" value={`${status.customDomainCount}`} />
-          <InfoRow label="Blocked / allowed / failed" value={`${status.blockedQueries} / ${status.allowedQueries} / ${status.failedQueries}`} />
-          <InfoRow label="Last event" value={status.lastEvent.replace(/_/g, ' ')} />
-          <InfoRow label="Event time" value={formatEventTime(status.lastEventTimestampMs)} />
+          <InfoRow
+            label="Permission"
+            value={status.prepared ? 'VPN approved' : 'Needs approval'}
+          />
+          <InfoRow label="Resolver" value={status.profileLabel || status.upstream} />
+          <InfoRow
+            label="Blocked / whitelisted sites"
+            value={`${status.customDomainCount} / ${status.whitelistedDomainCount}`}
+          />
+          <InfoRow
+            label="Blocked / allowed / failed"
+            value={`${status.blockedQueries} / ${status.allowedQueries} / ${status.failedQueries}`}
+          />
+          <InfoRow
+            label="Last event"
+            value={status.lastEvent.replace(/_/g, ' ')}
+          />
+          <InfoRow
+            label="Event time"
+            value={formatEventTime(status.lastEventTimestampMs)}
+          />
 
           <Text style={styles.note}>{status.note}</Text>
 
@@ -221,9 +295,64 @@ export function DnsFilterScreen({
         </View>
 
         <View style={styles.card}>
+          <Text style={styles.cardTitle}>Whitelisted Sites (Always Allowed)</Text>
+          <Text style={styles.cardSub}>
+            Add any legitimate site that should always get through — even if your upstream family DNS blocks it. Subdomains are allowed too, and changes apply immediately.
+          </Text>
+
+          <View style={styles.inputRow}>
+            <TextInput
+              value={whitelistText}
+              onChangeText={text => {
+                setWhitelistText(text);
+                if (whitelistError) setWhitelistError(null);
+              }}
+              placeholder="example.com, news.site"
+              placeholderTextColor={colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={styles.textInput}
+            />
+            <Pressable
+              disabled={busy || whitelistText.trim().length === 0}
+              onPress={addWhitelistedDomains}
+              style={[
+                styles.smallButton,
+                styles.allowButton,
+                (busy || whitelistText.trim().length === 0) && styles.disabled,
+              ]}>
+              <Text style={styles.smallButtonText}>Allow</Text>
+            </Pressable>
+          </View>
+
+          {whitelistError ? (
+            <Text style={styles.errorText}>{whitelistError}</Text>
+          ) : null}
+
+          {status.whitelistedDomains.length > 0 ? (
+            <View style={styles.chipWrap}>
+              {status.whitelistedDomains.map(domain => (
+                <Pressable
+                  key={domain}
+                  disabled={busy}
+                  onPress={() => removeWhitelistedDomain(domain)}
+                  style={styles.whitelistChip}>
+                  <Text style={styles.whitelistChipText}>{domain}</Text>
+                  <Text style={styles.domainChipRemove}> ✕</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.helper}>
+              No whitelisted sites yet. Add a domain above to let it through; tap a chip to remove it.
+            </Text>
+          )}
+        </View>
+
+        <View style={styles.card}>
           <Text style={styles.cardTitle}>Filtering Preset</Text>
           <Text style={styles.cardSub}>
-            The resolver blocks known adult and malicious domains before your apps connect to them.
+            The resolver blocks known adult and malicious domains before your apps connect to them, with automatic backup failover if the primary server hiccups.
           </Text>
 
           {PROFILES.map(profile => {
@@ -238,7 +367,11 @@ export function DnsFilterScreen({
                   {selected ? <Text style={styles.radioDot} /> : null}
                 </View>
                 <View style={styles.profileText}>
-                  <Text style={[styles.profileTitle, selected && styles.profileTitleSelected]}>
+                  <Text
+                    style={[
+                      styles.profileTitle,
+                      selected && styles.profileTitleSelected,
+                    ]}>
                     {profile.title}
                   </Text>
                   <Text style={styles.profileDetail}>{profile.detail}</Text>
@@ -267,7 +400,9 @@ export function DnsFilterScreen({
                   <Text style={styles.smallButtonText}>Save</Text>
                 </Pressable>
               </View>
-              <Text style={styles.helper}>IPv4 address or hostname. IPv6 and DNS-over-HTTPS are not supported here.</Text>
+              <Text style={styles.helper}>
+                IPv4 address or hostname. IPv6 and DNS-over-HTTPS are not supported here.
+              </Text>
             </View>
           ) : null}
         </View>
@@ -325,7 +460,9 @@ export function DnsFilterScreen({
               ))}
             </View>
           ) : (
-            <Text style={styles.helper}>No custom domains yet. Tap a chip to remove it.</Text>
+            <Text style={styles.helper}>
+              No custom domains yet. Tap a chip to remove it.
+            </Text>
           )}
         </View>
 
@@ -439,6 +576,7 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {color: '#FFFFFF', fontSize: 13.5, fontWeight: '800'},
   helper: {fontSize: 11, lineHeight: 16, color: colors.textMuted, marginTop: spacing.sm},
+  errorText: {fontSize: 11.5, lineHeight: 16, color: colors.danger, marginTop: spacing.sm, fontWeight: '600'},
   profileRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -482,6 +620,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  allowButton: {
+    backgroundColor: colors.success,
+  },
   smallButtonText: {color: '#FFFFFF', fontSize: 12, fontWeight: '800'},
   chipWrap: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md},
   domainChip: {
@@ -495,6 +636,17 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   domainChipText: {fontSize: 11.5, fontWeight: '700', color: colors.royalBlue},
+  whitelistChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.successSoft,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.success,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  whitelistChipText: {fontSize: 11.5, fontWeight: '700', color: colors.success},
   domainChipRemove: {fontSize: 11, color: colors.danger},
   warningText: {fontSize: 11.5, lineHeight: 18, color: colors.textSecondary},
   disabled: {opacity: 0.5},

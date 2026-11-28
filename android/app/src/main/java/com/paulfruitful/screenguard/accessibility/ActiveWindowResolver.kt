@@ -72,6 +72,14 @@ object ActiveWindowResolver {
         "com.asus.screenshot",
         "com.android.permissioncontroller",
         "com.google.android.permissioncontroller",
+        "com.xiaomi.bluetooth",
+        "com.android.bluetooth",
+        "com.miui.misound",
+        "com.miui.audiomonitor",
+        "com.xiaomi.barrage",
+        "com.xiaomi.continuity.sdkapp",
+        "com.miui.miservice",
+        "com.miui.thirdappassistant",
         "com.miui.Freeform",
         "com.miui.freeform",
         "com.miui.touchassistant"
@@ -105,6 +113,11 @@ object ActiveWindowResolver {
             lower.contains("screen.capture") ||
             lower.contains("longshot") ||
             lower.contains("scrollshot") ||
+            lower.contains("bluetooth") ||
+            lower.contains("misound") ||
+            lower.contains("audiomonitor") ||
+            lower.contains("earphone") ||
+            lower.contains("headset") ||
             lower.endsWith(".overlay")
     }
 

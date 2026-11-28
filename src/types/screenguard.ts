@@ -353,6 +353,8 @@ export interface DnsFilterStatus {
   upstream: string;
   customDomains: string[];
   customDomainCount: number;
+  whitelistedDomains: string[];
+  whitelistedDomainCount: number;
   useStarterList: boolean;
   blockedQueries: number;
   allowedQueries: number;
@@ -366,6 +368,7 @@ export interface DnsFilterConfigInput {
   profile: DnsFilterProfile;
   customHost: string;
   customDomains: string[];
+  whitelistedDomains: string[];
   useStarterList: boolean;
 }
 

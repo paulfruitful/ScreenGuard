@@ -227,12 +227,12 @@ class ProtectionDecisionEngine {
                 isSuggestiveOrActivity -> SUGGESTIVE_ACCUMULATIVE_THRESHOLD
                 else -> EXPLICIT_ACCUMULATIVE_THRESHOLD
             }
-            // Fast ~1.2s (2-frame) confirmation when high-confidence suggestive/thirst-trap frames
-            // repeat cleanly back-to-back (e.g. 0.88 + 0.88 >= 1.72), otherwise full 3-frame (~2.1s) gate.
+            // Fast 2-frame confirmation only for unmistakably strong suggestive frames
+            // (0.92 + 0.92 >= 1.84); normal borderline frames must pass the full 3-frame (~2.2s) gate.
             val strongSuggestiveTwoFrameConfirmed =
                 isSuggestiveOrActivity &&
                     consecutivePositiveFrames >= 2 &&
-                    accumulatedViolationScore >= 1.72f
+                    accumulatedViolationScore >= 1.84f
             val confirmed = isDeterministicUrl ||
                 strongSuggestiveTwoFrameConfirmed ||
                 (consecutivePositiveFrames >= requiredFrames && accumulatedViolationScore >= requiredAccumScore)
